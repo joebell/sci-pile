@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sci-Pile settings</title>
+    <link rel="icon" href="../../assets/icons/icon32.png">
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand">
+          <img src="../../assets/icons/icon128.png" alt="" width="64" height="64">
+          <div>
+            <p class="eyebrow">Sci-Pile</p>
+            <h1>PDF source prefixes</h1>
+          </div>
+        </div>
+        <p class="intro">
+          Add sources in the order they should be tried. The DOI is URL-encoded
+          and appended directly to each prefix.
+        </p>
+      </header>
+
+      <section aria-labelledby="sources-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="sources-title">Ordered sources</h2>
+            <p>Example: <code>https://example.org/pdf/</code></p>
+          </div>
+          <button id="add-prefix" type="button" class="secondary">Add source</button>
+        </div>
+
+        <ol id="prefix-list" aria-live="polite"></ol>
+        <p id="empty-state" class="empty">No sources configured yet.</p>
+      </section>
+
+      <section class="notice" aria-labelledby="permissions-title">
+        <h2 id="permissions-title">Site access</h2>
+        <p>
+          Saving requests access only to the configured sites. Access is used
+          to check whether each response begins with a PDF file header and to
+          parse standard PDF metadata from HTML in an offscreen extension
+          document. A source page opens only when you choose to handle a login,
+          CAPTCHA, or other interactive step.
+        </p>
+        <p>
+          Access to <code>app.paperpile.com</code> lets the extension ask the
+          installed Paperpile extension to find or create the DOI record,
+          attach the verified PDF, and show the listing. Paperpile sign-in
+          cookies are never read or stored here.
+        </p>
+        <p>
+          On <code>scholar.google.com</code>, Sci-Pile adds a button to each
+          result. A click sends that result's displayed title and citation to
+          Crossref only when the result itself does not expose a DOI.
+        </p>
+      </section>
+
+      <footer>
+        <p id="status" role="status" aria-live="polite"></p>
+        <button id="save" type="button" class="primary">Save sources</button>
+      </footer>
+    </main>
+
+    <template id="prefix-row-template">
+      <li class="prefix-row">
+        <span class="order" aria-hidden="true"></span>
+        <label>
+          <span class="sr-only">PDF URL prefix</span>
+          <input type="url" inputmode="url" placeholder="https://example.org/pdf/" autocomplete="off">
+        </label>
+        <div class="row-actions">
+          <button type="button" class="move-up" title="Move up" aria-label="Move source up">↑</button>
+          <button type="button" class="move-down" title="Move down" aria-label="Move source down">↓</button>
+          <button type="button" class="remove" title="Remove" aria-label="Remove source">×</button>
+        </div>
+        <p class="row-error" role="alert"></p>
+      </li>
+    </template>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

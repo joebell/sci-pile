@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sci-Pile — Looking for a PDF</title>
+    <link rel="icon" href="../../assets/icons/icon32.png">
+    <link rel="stylesheet" href="status.css">
+  </head>
+  <body>
+    <main>
+      <div id="spinner" class="spinner" aria-hidden="true"></div>
+      <div class="brand">
+        <img src="../../assets/icons/icon48.png" alt="" width="40" height="40">
+        <p class="eyebrow">Sci-Pile</p>
+      </div>
+      <h1 id="heading">Looking for a PDF</h1>
+      <p id="doi" class="doi"></p>
+      <p id="message" class="message">Checking the configured sources in order…</p>
+      <p id="current-url" class="current-url"></p>
+      <ol id="attempts"></ol>
+      <div id="actions" class="actions" hidden>
+        <button id="open-result" type="button" hidden>Open source page</button>
+        <button id="continue-result" type="button" hidden>Continue</button>
+        <button id="copy-diagnostics" type="button">Copy diagnostics</button>
+        <button id="open-options" type="button">Edit sources</button>
+        <button id="close-tab" type="button" class="secondary">Close tab</button>
+      </div>
+    </main>
+    <script type="module" src="status.js"></script>
+  </body>
+</html>

@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Sci-Pile",
+  "version": "0.7.6",
+  "description": "Resolve a DOI through user-configured sources, save the PDF, and import it into Paperpile.",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "offscreen",
+    "scripting",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "host_permissions": [
+    "https://app.paperpile.com/*",
+    "https://api.crossref.org/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://scholar.google.com/*"],
+      "css": ["src/scholar/scholar.css"],
+      "js": ["src/scholar/scholar.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Sci-Pile: find a PDF for the first DOI on this page",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png"
+    }
+  },
+  "options_page": "src/options/options.html"
+}

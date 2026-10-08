@@ -1,0 +1,9 @@
+{
+  "name": "sci-pile",
+  "version": "0.7.6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

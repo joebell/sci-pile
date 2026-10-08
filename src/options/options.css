@@ -1,0 +1,327 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #18202a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 680px;
+}
+
+main {
+  width: min(820px, calc(100% - 48px));
+  margin: 48px auto;
+  background: #fff;
+  border: 1px solid #dfe3e8;
+  border-radius: 18px;
+  box-shadow: 0 18px 60px rgb(24 32 42 / 9%);
+  overflow: hidden;
+}
+
+header,
+section,
+footer {
+  padding: 28px 32px;
+}
+
+header {
+  border-bottom: 1px solid #e6e9ed;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.brand img {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 auto;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 10px;
+  font-size: 30px;
+  letter-spacing: -0.035em;
+}
+
+h2 {
+  margin-bottom: 6px;
+  font-size: 17px;
+}
+
+.eyebrow {
+  margin-bottom: 8px;
+  color: #cf2026;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.intro,
+.section-heading p,
+.notice p {
+  color: #5b6674;
+  line-height: 1.55;
+}
+
+.intro {
+  max-width: 620px;
+  margin-bottom: 0;
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.section-heading p {
+  margin-bottom: 0;
+  font-size: 13px;
+}
+
+code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #eff2f6;
+  color: #263444;
+}
+
+#prefix-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prefix-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dce1e7;
+  border-radius: 12px;
+  background: #fbfcfd;
+}
+
+.prefix-row.invalid {
+  border-color: #c83737;
+  background: #fff9f9;
+}
+
+.order {
+  display: grid;
+  width: 30px;
+  height: 38px;
+  place-items: center;
+  color: #697586;
+  font-weight: 700;
+}
+
+label,
+input {
+  width: 100%;
+}
+
+input {
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  background: #fff;
+  color: #17202a;
+  font: inherit;
+}
+
+input:focus {
+  border-color: #cf2026;
+  outline: 3px solid rgb(207 32 38 / 15%);
+}
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.row-actions button {
+  width: 36px;
+  height: 38px;
+  background: transparent;
+  color: #4d5968;
+  font-size: 17px;
+}
+
+.row-actions button:hover:not(:disabled) {
+  background: #e9edf2;
+}
+
+.row-actions .remove {
+  color: #a32929;
+  font-size: 22px;
+}
+
+.row-error {
+  grid-column: 2 / -1;
+  margin: -3px 0 0;
+  color: #b52a2a;
+  font-size: 12px;
+}
+
+.empty {
+  margin: 0;
+  padding: 28px;
+  border: 1px dashed #cfd5dc;
+  border-radius: 12px;
+  color: #697586;
+  text-align: center;
+}
+
+.notice {
+  margin: 0 32px 28px;
+  padding: 18px 20px;
+  border-radius: 12px;
+  background: #edf5ff;
+}
+
+.notice p {
+  margin-bottom: 0;
+  font-size: 14px;
+}
+
+.notice p + p {
+  margin-top: 12px;
+}
+
+footer {
+  display: flex;
+  min-height: 92px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  border-top: 1px solid #e6e9ed;
+  background: #fafbfc;
+}
+
+#status {
+  margin: 0 auto 0 0;
+  color: #435164;
+}
+
+.primary,
+.secondary {
+  padding: 10px 16px;
+}
+
+.primary {
+  background: #cf2026;
+  color: #fff;
+}
+
+.primary:hover {
+  background: #a9191e;
+}
+
+.secondary {
+  border: 1px solid #c9d0d8;
+  background: #fff;
+  color: #253244;
+}
+
+.secondary:hover {
+  background: #f3f5f7;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #11151a;
+    color: #ecf0f4;
+  }
+
+  main,
+  input,
+  .secondary {
+    background: #1c222a;
+    color: #ecf0f4;
+  }
+
+  main,
+  header,
+  footer,
+  .prefix-row,
+  input,
+  .secondary {
+    border-color: #343e49;
+  }
+
+  footer,
+  .prefix-row {
+    background: #181e25;
+  }
+
+  .intro,
+  .section-heading p,
+  .notice p,
+  #status {
+    color: #acb6c2;
+  }
+
+  code,
+  .row-actions button:hover:not(:disabled) {
+    background: #2a333d;
+    color: #e7ebef;
+  }
+
+  .notice {
+    background: #162b43;
+  }
+
+  .empty {
+    border-color: #3b4652;
+    color: #9eabb9;
+  }
+}
