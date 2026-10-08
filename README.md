@@ -1,5 +1,9 @@
 # Sci-Pile
 
+<p align="center">
+  <img src="assets/icons/scipile-icon-master.png" alt="Sci-Pile icon" width="160">
+</p>
+
 Sci-Pile is a Chromium browser extension that finds a paper from its DOI using
 an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
@@ -61,6 +65,16 @@ After pulling an update, return to `chrome://extensions` and click Sci-Pile's
 
 Add complete URL prefixes in the order they should be tried. The encoded DOI is
 appended directly to each prefix.
+
+Use Sci-Pile only with sources and content you are authorized to access. Using
+Sci-Hub or similar sources to access PDFs without appropriate authorization or
+licensing is prohibited. If Sci-Pile is configured to work with Sci-Hub for
+lawfully accessible material, its URL prefixes take forms such as:
+
+- [https://www.sci-hub.st/](https://www.sci-hub.st/)
+- [https://sci-hub.su/](https://sci-hub.su/)
+- [https://sci-hub.box/](https://sci-hub.box/)
+- [https://sci-hub.red/](https://sci-hub.red/)
 
 For example, with:
 
