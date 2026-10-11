@@ -53,8 +53,25 @@ continueButton.addEventListener("click", async () => {
     return;
   }
   continueButton.disabled = true;
-  continueButton.textContent = "Checking…";
+  const permissionOrigin = renderedJob.interaction?.permissionOrigin;
+  continueButton.textContent = permissionOrigin ? "Requesting access…" : "Checking…";
   try {
+    if (permissionOrigin) {
+      const alreadyGranted = await chrome.permissions.contains({
+        origins: [permissionOrigin],
+      });
+      const granted = alreadyGranted || await chrome.permissions.request({
+        origins: [permissionOrigin],
+      });
+      if (!granted) {
+        message.textContent = `Sci-Pile needs access to ${displayOrigin(permissionOrigin)} to inspect the displayed source page. No other site was requested.`;
+        continueButton.disabled = false;
+        continueButton.textContent = "Allow source & continue";
+        return;
+      }
+      continueButton.textContent = "Checking…";
+    }
+
     const response = await chrome.runtime.sendMessage({
       target: "background",
       type: "continue-interaction",
@@ -63,14 +80,14 @@ continueButton.addEventListener("click", async () => {
     if (!response?.ok) {
       message.textContent = response?.error ?? "The source page could not be checked.";
       continueButton.disabled = false;
-      continueButton.textContent = "Continue";
+      continueButton.textContent = permissionOrigin ? "Allow source & continue" : "Continue";
     }
   } catch (error) {
     message.textContent = error instanceof Error
       ? error.message
       : "The source page could not be checked.";
     continueButton.disabled = false;
-    continueButton.textContent = "Continue";
+    continueButton.textContent = permissionOrigin ? "Allow source & continue" : "Continue";
   }
 });
 
@@ -145,6 +162,9 @@ function render(job) {
     job.status === "interaction-required" &&
     Number.isInteger(job.interaction?.tabId)
   );
+  continueButton.textContent = job.interaction?.permissionOrigin
+    ? "Allow source & continue"
+    : "Continue";
   doiElement.textContent = job.doi ? `DOI ${job.doi}` : "";
   currentUrl.textContent = job.currentUrl ? `Trying: ${job.currentUrl}` : "";
   attempts.replaceChildren();
@@ -341,6 +361,9 @@ function downloadMessage(download) {
 }
 
 function interactionHeading(interaction) {
+  if (interaction?.kind === "permission") {
+    return "Source access required";
+  }
   if (interaction?.kind === "challenge") {
     return "Browser verification required";
   }
@@ -351,11 +374,21 @@ function interactionHeading(interaction) {
 }
 
 function interactionMessage(interaction) {
+  if (interaction?.permissionOrigin) {
+    const error = interaction?.error ? ` Last check: ${interaction.error}` : "";
+    return `${interaction?.reason ?? "The source redirected to a different website."} Choose Allow source & continue to grant access only to ${displayOrigin(interaction.permissionOrigin)}.${error}`;
+  }
   const nextStep = Number.isInteger(interaction?.tabId)
     ? "Complete any required step in the source tab. The extension will continue automatically when that tab finishes loading; Continue is available as a fallback."
     : "Open the source page only if you want to continue manually.";
   const error = interaction?.error ? ` Last check: ${interaction.error}` : "";
   return `${interaction?.reason ?? "The PDF could not be found in the background."} ${nextStep}${error}`;
+}
+
+function displayOrigin(pattern) {
+  return String(pattern ?? "")
+    .replace(/\/\*$/, "")
+    .replace(/\/$/, "");
 }
 
 function responseSummary(attempt) {

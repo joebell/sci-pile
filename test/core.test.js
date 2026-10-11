@@ -11,6 +11,7 @@ import {
   httpUrlFromTab,
   normalizeDoi,
   originPattern,
+  originPatternForUrl,
   validatePrefix,
 } from "../src/lib/core.js";
 
@@ -76,6 +77,14 @@ test("creates a host permission pattern", () => {
     originPattern("https://example.org:8443/pdf/"),
     "https://example.org:8443/*",
   );
+});
+
+test("creates a host permission pattern from a resolved asset URL", () => {
+  assert.equal(
+    originPatternForUrl("https://files.example.org/papers/article.pdf#view=FitH"),
+    "https://files.example.org/*",
+  );
+  assert.throws(() => originPatternForUrl("chrome-extension://viewer/index.html"), /HTTPS or HTTP/);
 });
 
 test("creates a safe PDF filename from a DOI", () => {

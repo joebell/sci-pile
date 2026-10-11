@@ -144,6 +144,25 @@ export function originPattern(prefix) {
   return `${url.protocol}//${url.host}/*`;
 }
 
+/** Return a host permission pattern for a resolved page or asset URL. */
+export function originPatternForUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("Enter a valid absolute URL.");
+  }
+
+  if (!["https:", "http:"].includes(url.protocol)) {
+    throw new Error("The URL must use HTTPS or HTTP.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Credentials are not allowed in a URL.");
+  }
+
+  return `${url.protocol}//${url.host}/*`;
+}
+
 export function filenameForDoi(doi) {
   const normalized = normalizeDoi(doi);
   if (!normalized) {

@@ -4,6 +4,7 @@ import {
   httpUrlFromTab,
   normalizeDoi,
   originPattern,
+  originPatternForUrl,
 } from "./lib/core.js";
 import { resolveDoiFromBibliographicMetadata } from "./lib/crossref.js";
 import {
@@ -50,7 +51,11 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === "complete" || typeof changeInfo.title === "string") {
+  if (
+    changeInfo.status === "complete" ||
+    typeof changeInfo.title === "string" ||
+    typeof changeInfo.url === "string"
+  ) {
     void resumeJobForInteractionTab(tabId);
   }
 });
@@ -413,7 +418,7 @@ async function verifyPdfCandidates(discovery, { credentials = "omit" } = {}) {
 
     let permission;
     try {
-      permission = originPattern(candidate.url);
+      permission = originPatternForUrl(candidate.url);
     } catch (error) {
       candidateAttempt.status = "failed";
       candidateAttempt.error = errorMessage(error);
@@ -520,8 +525,16 @@ async function ensureOffscreenDocument() {
 }
 
 async function setInteractionRequired({ job, url, discovery, tabId = null, error = null }) {
-  const status = discovery?.interaction?.kind ?? "manual";
-  let reason = discovery?.interaction?.reason;
+  const permissionAttempt = discovery?.attempts?.find(
+    (attempt) => attempt?.status === "permission-missing" && attempt.permissionOrigin,
+  );
+  const permissionOrigin = discovery?.permissionOrigin ?? permissionAttempt?.permissionOrigin ?? null;
+  const status = permissionOrigin ? "permission" : discovery?.interaction?.kind ?? "manual";
+  let reason = discovery?.interaction?.kind === "permission"
+    ? discovery.interaction.reason
+    : permissionOrigin
+      ? "The displayed page declared a PDF on a website Sci-Pile cannot inspect yet. Allow access to that site to continue."
+      : discovery?.interaction?.reason;
   if (!reason && discovery?.status === "inspection-failed") {
     reason = "The landing page could not be inspected in the background.";
   }
@@ -543,6 +556,7 @@ async function setInteractionRequired({ job, url, discovery, tabId = null, error
     reason,
     tabId: Number.isInteger(tabId) ? tabId : job.interaction?.tabId ?? null,
     error,
+    permissionOrigin,
   };
   await saveJob(job);
 }
@@ -649,7 +663,52 @@ async function continueAfterInteraction(job) {
   job.status = "resuming";
   job.interaction.currentUrl = currentUrl;
   job.interaction.error = null;
+  job.interaction.permissionOrigin = null;
   await saveJob(job);
+
+  let currentPermissionOrigin = null;
+  try {
+    currentPermissionOrigin = originPatternForUrl(currentUrl);
+  } catch {
+    // The subsequent probe provides the useful error for a malformed URL.
+  }
+
+  if (
+    currentPermissionOrigin &&
+    !await chrome.permissions.contains({ origins: [currentPermissionOrigin] })
+  ) {
+    const resumeAttempt = {
+      browserTabUrl,
+      requestedUrl: currentUrl,
+      finalUrl: null,
+      resultKind: null,
+      details: null,
+      error: "Site access is required for the redirected source.",
+      liveInspection: {
+        pageUrl: browserTabUrl,
+        pageTitle: tab.title ?? null,
+        contentType: null,
+        candidateCount: 0,
+        error: "The displayed page could not be inspected before site access was granted.",
+      },
+    };
+    job.interaction.resumeAttempt = resumeAttempt;
+    await setInteractionRequired({
+      job,
+      url: currentUrl,
+      tabId,
+      discovery: {
+        status: "permission-missing",
+        permissionOrigin: currentPermissionOrigin,
+        interaction: {
+          kind: "permission",
+          reason: "The source redirected to a different website. Allow access to the displayed site so Sci-Pile can inspect its standard PDF links.",
+        },
+      },
+      error: null,
+    });
+    return { status: "permission-required", permissionOrigin: currentPermissionOrigin };
+  }
 
   let liveInspection = {
     pageUrl: browserTabUrl,
@@ -658,8 +717,8 @@ async function continueAfterInteraction(job) {
     candidates: [],
   };
   let liveInspectionError = null;
+  let tabLoadWarning = null;
   try {
-    await waitForTabComplete(tabId, 15_000);
     const [injection] = await chrome.scripting.executeScript({
       target: { tabId },
       func: inspectInteractiveSourcePage,
@@ -669,6 +728,30 @@ async function continueAfterInteraction(job) {
     }
   } catch (error) {
     liveInspectionError = errorMessage(error);
+  }
+
+  if (
+    !liveInspection.candidates?.length &&
+    tab.status !== "complete"
+  ) {
+    try {
+      await waitForTabComplete(tabId, 5_000);
+    } catch (error) {
+      tabLoadWarning = errorMessage(error);
+    }
+
+    try {
+      const [injection] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: inspectInteractiveSourcePage,
+      });
+      if (injection?.result && typeof injection.result === "object") {
+        liveInspection = injection.result;
+        liveInspectionError = null;
+      }
+    } catch (error) {
+      liveInspectionError = errorMessage(error);
+    }
   }
 
   let result = null;
@@ -694,6 +777,7 @@ async function continueAfterInteraction(job) {
         ? liveInspection.candidates.length
         : 0,
       error: liveInspectionError,
+      loadWarning: tabLoadWarning,
     },
   };
   job.interaction.resumeAttempt = resumeAttempt;

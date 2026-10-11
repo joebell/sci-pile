@@ -9,7 +9,7 @@ an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results.
 
-Sci-Pile is currently version 0.8.1. It:
+Sci-Pile is currently version 0.8.2. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -186,8 +186,11 @@ discovery when that tab finishes loading, using the browser session from that
 tab. After an explicit interaction, this retry also recognizes standard
 `<embed type="application/pdf">`, `<object type="application/pdf">`, and
 PDF-labelled iframe declarations in the displayed page, and unwraps Chromium's
-built-in PDF-viewer URL. **Continue** remains available as a fallback for pages
-that update without a top-level navigation. The source tab closes after success.
+built-in PDF-viewer URL. If the source redirects to a different host, Sci-Pile
+shows the redirected host and asks for narrowly scoped access when the user
+chooses **Allow source & continue**. **Continue** remains available as a fallback
+for pages that update without a top-level navigation. The source tab closes
+after success.
 Other HTTP errors and successful responses that are neither PDF nor HTML
 continue to the next source.
 
@@ -208,7 +211,11 @@ restart.
   its local buttons. When a clicked result has no visible DOI, its displayed
   title and citation are sent to Crossref for DOI matching.
 - Persistent host access is requested only for origins represented in the saved
-  prefix list.
+  prefix list or for a redirected source host that the user explicitly approves
+  from the status page.
+- Chrome's `tabs` permission is used to identify the final URL of the one source
+  tab Sci-Pile opened when a challenge or login redirects it to another host.
+  Sci-Pile does not enumerate or retain unrelated browsing history.
 - Initial PDF and landing-page probes do not send browser credentials or
   cookies. After the user explicitly opens an interactive page and clicks
   **Continue**, that retry can use cookies already set for the source.
@@ -252,7 +259,8 @@ For implementation details and the Paperpile integration design, see
   be scanned.
 - Signed-in or challenged sources require the user to open the source page and
   complete the interactive step. The extension then retries automatically;
-  **Continue** is available when a page updates without navigating. Automatic
+  **Continue** is available when a page updates without navigating. A redirect
+  to a new host requires one click to grant access to that exact host. Automatic
   login or CAPTCHA solving is intentionally not attempted.
 - Paperpile import currently depends on its Chromium browser extension. A future
   public Paperpile REST API is the preferred cross-browser and iOS integration.

@@ -134,7 +134,9 @@ Paperpile reference / article page / pasted DOI
    request when a CAPTCHA, login, or other interactive step is required. The
    background worker observes that extension-opened tab and resumes discovery
    automatically after its next completed navigation, with a manual retry for
-   pages that update in place.
+   pages that update in place. It observes the tab's final URL so a cross-host
+   redirect can be surfaced to the user; access to the redirected host is
+   requested only from the status page and only after an explicit click.
 6. The local prototype asks Paperpile's own extension to find or create the DOI
    record and run its PDF attachment job. Authentication, duplicate detection,
    file hashing, local IndexedDB writes, upload, and sync remain inside Paperpile.
