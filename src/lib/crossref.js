@@ -12,7 +12,7 @@ export async function resolveDoiFromBibliographicMetadata(
 ) {
   const title = cleanText(metadata?.title);
   if (!title) {
-    throw new Error("This Scholar result does not include a usable title.");
+    throw new Error("This bibliographic record does not include a usable title.");
   }
 
   const citation = cleanText(metadata?.citation);
@@ -68,7 +68,7 @@ export async function resolveDoiFromBibliographicMetadata(
   const best = candidates[0];
   if (!best || !best.accepted) {
     throw new Error(
-      "No unambiguous DOI match was found for this Scholar result.",
+      "No unambiguous DOI match was found for this bibliographic record.",
     );
   }
 

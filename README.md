@@ -8,9 +8,10 @@ Sci-Pile is a Chromium browser extension that finds a paper from its DOI using
 an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results and a **Find PDF with
-sci-pile** command inside Paperpile's own **Add PDF** menu.
+sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
+menu also has a batch scan for selected references with missing PDFs.
 
-Sci-Pile is currently version 0.8.3. It:
+Sci-Pile is currently version 0.9.0. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -27,6 +28,8 @@ Sci-Pile is currently version 0.8.3. It:
    `scholar.google.com`.
 9. Adds **Find PDF with sci-pile** to the **Add PDF** menu for a selected
    DOI-bearing reference in Paperpile's library.
+10. Adds **Scan with sci-pile for missing PDFs…** to Paperpile's main menu,
+    with a review page for selecting and processing missing-PDF references.
 
 The extension ships with no source list. Users configure sources they are
 authorized to use. Automatic import requires Paperpile's own browser extension
@@ -114,14 +117,17 @@ approval.
 
 ## Use
 
-Start a lookup in any of three ways:
+Start a lookup in any of four ways:
 
 - Open an article page containing a DOI and click the Sci-Pile toolbar button.
 - Click the **sci-pile** button beneath a Google Scholar result.
 - Select a DOI-bearing Paperpile reference, open **Add PDF**, and choose
   **Find PDF with sci-pile**.
+- Select one or more Paperpile references, open its main menu, and choose
+  **Scan with sci-pile for missing PDFs…**.
 
-A status tab shows progress and every failed attempt. When a source returns
+For a single-paper lookup, a status tab shows progress and every failed attempt.
+When a source returns
 bytes containing the `%PDF-` file signature near the start of its response,
 the PDF is saved to the default Downloads directory and passed to Paperpile.
 The status tab remains available for incomplete or failed runs and closes
@@ -152,6 +158,19 @@ The option sends that reference's DOI directly into the same resolver, avoiding
 an ambiguous scan of other references visible in the library. The integration
 is feature-detected and silently stays out of the menu if Paperpile changes its
 undocumented page structure; the toolbar action remains available as a fallback.
+
+For batch work, select one or more references and choose **Scan with sci-pile
+for missing PDFs…** from Paperpile's main reference-actions menu. Sci-Pile opens
+its own review tab and lists every selected reference as **Missing PDF**, **PDF
+already attached**, or **DOI unavailable**. Missing-PDF records with an
+identified DOI are checked by default; they can be selected individually or
+with **Select all missing PDFs** before starting.
+
+The batch queue processes references one at a time so Paperpile's attachment
+bridge is not asked to run overlapping imports. If a source needs browser
+verification, sign-in, or additional host permission, the queue pauses on that
+row and resumes after the interactive step succeeds. Records that already have
+a PDF are never sent to the resolver by the batch command.
 
 The extension then opens or reuses `app.paperpile.com`, activates that tab so a
 cold Paperpile session can finish initializing, and asks Paperpile's own
@@ -229,6 +248,10 @@ restart.
 - The Google Scholar content script reads result metadata only when rendering
   its local buttons. When a clicked result has no visible DOI, its displayed
   title and citation are sent to Crossref for DOI matching.
+- The Paperpile content script reads only selected reference rows after the
+  batch command is chosen. PDF presence is checked locally. For a missing-PDF
+  row whose DOI is not exposed in the page, its displayed title, author,
+  journal, and year are sent to Crossref for conservative DOI matching.
 - By default, persistent host access is requested only for origins represented
   in the saved prefix list or for a redirected source host that the user
   explicitly approves from the status page. Enabling **Automatically follow
@@ -249,7 +272,8 @@ restart.
   The Paperpile user object needed by its PDF crawler is passed back to that
   extension in memory and excluded from diagnostics.
 - Prefixes are synchronized through `chrome.storage.sync`. Lookup status lives
-  only in `chrome.storage.session`.
+  only in `chrome.storage.session`; batch review state uses the same
+  session-scoped storage.
 
 ## Paperpile compatibility
 
@@ -286,3 +310,6 @@ For implementation details and the Paperpile integration design, see
   not attempted.
 - Paperpile import currently depends on its Chromium browser extension. A future
   public Paperpile REST API is the preferred cross-browser and iOS integration.
+- The Paperpile menu integrations depend on Paperpile's undocumented DOM. They
+  are feature-detected and may temporarily disappear if Paperpile changes its
+  menus or reference-row markup.

@@ -8,6 +8,12 @@
     "Browse for PDF…",
     "Search Google for PDF…",
   ];
+  const REQUIRED_MAIN_MENU_LABELS = [
+    "Auto update",
+    "Find PDFs online",
+    "Make a copy",
+    "Export…",
+  ];
 
   function normalizeLabel(value) {
     return typeof value === "string"
@@ -64,10 +70,29 @@
     return REQUIRED_MENU_LABELS.every((label) => available.has(label));
   }
 
+  function isPaperpileMainMenu(labels) {
+    const available = new Set((labels ?? []).map(normalizeLabel));
+    return REQUIRED_MAIN_MENU_LABELS.every((label) => available.has(label));
+  }
+
+  function cleanReferenceText(value) {
+    return typeof value === "string"
+      ? value.replace(/[\u200b-\u200f\u2060\ufeff]/g, "").trim().replace(/\s+/g, " ")
+      : "";
+  }
+
+  function referenceYear(value) {
+    const match = cleanReferenceText(value).match(/\b(?:19|20)\d{2}\b/);
+    return match ? Number(match[0]) : null;
+  }
+
   root.SciPilePaperpileMenuCore = Object.freeze({
     findDoiInValues,
+    cleanReferenceText,
+    isPaperpileMainMenu,
     isPaperpilePdfMenu,
     normalizeDoi,
     normalizeLabel,
+    referenceYear,
   });
 })(globalThis);

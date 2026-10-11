@@ -1,11 +1,17 @@
 # Sci-Pile — Architecture Plan
 
-Status: local Chromium prototype implemented, 2026-10-08
+Status: local Chromium prototype implemented, updated 2026-10-11
 
 The desktop prototype also includes a narrowly scoped Google Scholar content
 script. It adds a per-result Sci-Pile action, extracts an exposed DOI when
 available, and otherwise performs a conservative Crossref bibliographic match
 before entering the normal resolver pipeline.
+
+Paperpile's main reference-actions menu also exposes a batch scan. The content
+script snapshots the selected rows, marks records that already expose a PDF,
+and opens an extension-owned review page. Missing-PDF rows without a DOI in the
+DOM use the same conservative Crossref matcher before they become selectable.
+The background worker then resolves and attaches the checked rows sequentially.
 
 ## Scope and boundary
 
@@ -157,10 +163,15 @@ available, the internal bridge should be replaced by supported OAuth endpoints.
 - **Popup/side panel:** current work, ranked locations, provenance, and actions.
 - **Paperpile content script:** captures the selected reference's visible DOI
   when its `Add PDF` control is activated and inserts an optional
-  `Find PDF with sci-pile` item into the resulting menu. DOM integration is a
-  feature-detected enhancement, not the only input path.
+  `Find PDF with sci-pile` item into the resulting menu. It also feature-detects
+  the main reference-actions menu, snapshots selected rows and their local PDF
+  state, and inserts `Scan with sci-pile for missing PDFs…`.
+- **Batch review page:** lists selected records and their PDF/DOI state, supports
+  individual and select-all controls, and surfaces per-record interaction steps
+  without opening a status tab for every queued DOI.
 - **Background service worker:** resolver orchestration, caching, timeouts,
-  redirects, permission requests, downloads, and interaction-state recovery.
+  redirects, permission requests, downloads, interaction-state recovery, and a
+  sequential Paperpile batch queue.
 - **Offscreen HTML parser:** standard metadata and general CAPTCHA/login
   detection for landing pages without creating a visible browser tab.
 - **Resolver core:** pure TypeScript package shared by browser and future iOS clients.
