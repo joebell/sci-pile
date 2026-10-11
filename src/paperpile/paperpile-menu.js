@@ -18,6 +18,9 @@
   const SCAN_ITEM_ATTRIBUTE = "data-scipile-paperpile-scan-item";
   const SCAN_LABEL = "Scan with sci-pile for missing PDFs…";
   const TARGET_MAX_AGE_MS = 15_000;
+  const EXPORT_CAPTURE_TIMEOUT_MS = 60_000;
+  const EXPORT_REQUEST_SOURCE = "sci-pile-paperpile-menu";
+  const EXPORT_RESPONSE_SOURCE = "sci-pile-paperpile-export-bridge";
   let pendingTarget = null;
   let installScheduled = false;
 
@@ -225,7 +228,7 @@
   }
 
   function configureScanMenuItem(item) {
-    const count = selectedReferences().length;
+    const count = selectedCount();
     if (!["working", "started"].includes(item.dataset.scipileState)) {
       item.dataset.scipileState = "ready";
       setItemLabel(item, SCAN_LABEL);
@@ -277,13 +280,18 @@
       .filter((reference) => reference.title);
   }
 
+  function selectedCount() {
+    return core.selectedReferenceCount(document.body.innerText) ?? selectedReferences().length;
+  }
+
   async function startScan(item) {
     if (["working", "started"].includes(item.dataset.scipileState)) {
       return;
     }
 
-    const references = selectedReferences();
-    if (!references.length) {
+    const visibleReferences = selectedReferences();
+    const selectionCount = selectedCount();
+    if (!selectionCount) {
       return;
     }
 
@@ -292,10 +300,20 @@
     setItemLabel(item, "Opening sci-pile review…");
 
     try {
+      const references = selectionCount > visibleReferences.length
+        ? await exportSelectedReferences()
+        : visibleReferences;
+      if (selectionCount > references.length) {
+        throw new Error(
+          `Paperpile reports ${selectionCount} selected references, but Sci-Pile could only read ` +
+          `${references.length}. Reload this Paperpile tab and try again.`,
+        );
+      }
       const response = await chrome.runtime.sendMessage({
         target: "background",
         type: "create-paperpile-scan",
         references,
+        selectionCount,
       });
       if (!response?.ok) {
         throw new Error(response?.error ?? "Sci-Pile could not start the scan.");
@@ -309,6 +327,98 @@
       item.title = error instanceof Error ? error.message : String(error);
       setItemLabel(item, SCAN_LABEL);
     }
+  }
+
+  async function exportSelectedReferences() {
+    const exported = await capturePaperpileJsonExport();
+    let records;
+    try {
+      records = JSON.parse(exported);
+    } catch {
+      throw new Error("Paperpile returned an unreadable selected-reference export.");
+    }
+    if (!Array.isArray(records)) {
+      throw new Error("Paperpile did not return a selected-reference list.");
+    }
+    return records.map(core.referenceFromPaperpileExport).filter(Boolean);
+  }
+
+  async function capturePaperpileJsonExport() {
+    const requestId = crypto.randomUUID();
+    let timeoutId;
+    let armed = false;
+    const capture = new Promise((resolve, reject) => {
+      const onMessage = (event) => {
+        const message = event.data;
+        if (
+          event.source !== window ||
+          event.origin !== location.origin ||
+          message?.source !== EXPORT_RESPONSE_SOURCE ||
+          message.requestId !== requestId
+        ) {
+          return;
+        }
+        if (message.type === "paperpile-copy-capture-armed") {
+          armed = true;
+          clearTimeout(timeoutId);
+          timeoutId = setTimeout(onTimeout, EXPORT_CAPTURE_TIMEOUT_MS);
+          dispatchPaperpileJsonShortcut();
+          return;
+        }
+        if (message.type !== "paperpile-copy-captured") {
+          return;
+        }
+        cleanup();
+        resolve(message.text);
+      };
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        window.removeEventListener("message", onMessage);
+      };
+      const onTimeout = () => {
+        cleanup();
+        window.postMessage({
+          source: EXPORT_REQUEST_SOURCE,
+          type: "cancel-paperpile-copy-capture",
+          requestId,
+        }, location.origin);
+        reject(new Error(
+          armed
+            ? "Paperpile did not finish exporting the complete selection in time."
+            : "Paperpile's full selected-reference export was unavailable. Reload this Paperpile tab and try again.",
+        ));
+      };
+
+      timeoutId = setTimeout(onTimeout, 2_500);
+      window.addEventListener("message", onMessage);
+    });
+
+    window.postMessage({
+      source: EXPORT_REQUEST_SOURCE,
+      type: "capture-next-paperpile-copy",
+      requestId,
+    }, location.origin);
+    return await capture;
+  }
+
+  function dispatchPaperpileJsonShortcut() {
+    const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+    const target = document.activeElement instanceof Element
+      ? document.activeElement
+      : document.body;
+    const options = {
+      key: "j",
+      code: "KeyJ",
+      keyCode: 74,
+      which: 74,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      metaKey: isMac,
+      ctrlKey: !isMac,
+    };
+    target.dispatchEvent(new KeyboardEvent("keydown", options));
+    target.dispatchEvent(new KeyboardEvent("keyup", options));
   }
 
   async function startResolution(item) {

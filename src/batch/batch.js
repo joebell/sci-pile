@@ -149,7 +149,8 @@ function render(scan) {
     clearNotice();
   }
 
-  list.replaceChildren(...scan.references.map((reference) => referenceItem(reference, scan)));
+  const displayed = scan.references.filter((reference) => reference.state !== "already-attached");
+  list.replaceChildren(...displayed.map((reference) => referenceItem(reference, scan)));
 
   const selectedCount = selectable.filter((reference) => selectedIds.has(reference.id)).length;
   selectAll.disabled = scan.status !== "ready" || selectable.length === 0;
@@ -316,11 +317,15 @@ function scanSummary(scan, counts) {
     return `Finished. ${progressText(counts)}`;
   }
   const missing = (counts.ready ?? 0) + (counts.unresolved ?? 0);
-  const attached = counts["already-attached"] ?? 0;
+  const totalSelected = scan.totalSelected ?? scan.total;
+  const attached = scan.excludedAttached ?? counts["already-attached"] ?? 0;
   if (!missing) {
-    return `All ${scan.total} selected reference${scan.total === 1 ? " already has" : "s already have"} a PDF.`;
+    return `None of the ${totalSelected} selected reference${totalSelected === 1 ? " is" : "s are"} missing a PDF.`;
   }
-  return `${missing} of ${scan.total} selected reference${scan.total === 1 ? " is" : "s are"} missing a PDF; ${attached} already ${attached === 1 ? "has" : "have"} one.`;
+  const omitted = attached
+    ? ` ${attached} reference${attached === 1 ? " with a PDF was" : "s with PDFs were"} omitted.`
+    : "";
+  return `${missing} of ${totalSelected} selected reference${totalSelected === 1 ? " is" : "s are"} missing a PDF.${omitted}`;
 }
 
 function progressText(counts) {

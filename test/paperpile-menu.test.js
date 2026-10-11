@@ -66,6 +66,33 @@ test("cleans Paperpile title markers and extracts a plausible year", () => {
   assert.equal(core.referenceYear("No date"), null);
 });
 
+test("reads Paperpile's complete selected-reference count", () => {
+  assert.equal(core.selectedReferenceCount("336 references · 336 selected"), 336);
+  assert.equal(core.selectedReferenceCount("1,940 references · 1,202 selected"), 1202);
+  assert.equal(core.selectedReferenceCount("No selection"), null);
+});
+
+test("normalizes Paperpile JSON exports and detects an attached main PDF", () => {
+  const reference = core.referenceFromPaperpileExport({
+    _id: "paper-1",
+    title: " A selected paper ",
+    author: [{ first: "Ada", last: "Lovelace" }],
+    journal: "Journal of Tests",
+    year: "2024",
+    doi: "https://doi.org/10.1000/example",
+    attachments: [{ _id: "pdf-1", article_pdf: 1, mimeType: "application/pdf" }],
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(reference)), {
+    paperpileId: "paper-1",
+    title: "A selected paper",
+    citation: "Lovelace, Ada - Journal of Tests",
+    year: 2024,
+    doi: "10.1000/example",
+    hasPdf: true,
+  });
+});
+
 test("manifest loads the Paperpile menu scripts only on library pages", async () => {
   const manifest = JSON.parse(await readFile(
     new URL("../manifest.json", import.meta.url),
@@ -74,7 +101,15 @@ test("manifest loads the Paperpile menu scripts only on library pages", async ()
   const entry = manifest.content_scripts.find((contentScript) =>
     contentScript.matches.includes("https://app.paperpile.com/my-library/*"));
 
-  assert.deepEqual(entry.js, [
+  assert.deepEqual(entry.js, ["src/paperpile/paperpile-export-bridge.js"]);
+  assert.equal(entry.world, "MAIN");
+  assert.equal(entry.run_at, "document_start");
+
+  const menuEntry = manifest.content_scripts.find((contentScript) =>
+    contentScript.matches.includes("https://app.paperpile.com/my-library/*") &&
+    contentScript.world !== "MAIN");
+
+  assert.deepEqual(menuEntry.js, [
     "src/paperpile/paperpile-menu-core.js",
     "src/paperpile/paperpile-menu.js",
   ]);

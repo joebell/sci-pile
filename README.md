@@ -11,7 +11,7 @@ button beside Paperpile on Google Scholar results and a **Find PDF with
 sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
 menu also has a batch scan for selected references with missing PDFs.
 
-Sci-Pile is currently version 0.9.0. It:
+Sci-Pile is currently version 0.9.1. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -37,7 +37,7 @@ and a signed-in Paperpile web app.
 
 ## Requirements
 
-- Chrome or another Chromium browser that supports Manifest V3 (Chrome 109 or
+- Chrome or another Chromium browser that supports Manifest V3 (Chrome 111 or
   newer).
 - One or more DOI-based PDF or landing-page sources that you are authorized to
   access.
@@ -161,10 +161,17 @@ undocumented page structure; the toolbar action remains available as a fallback.
 
 For batch work, select one or more references and choose **Scan with sci-pile
 for missing PDFs…** from Paperpile's main reference-actions menu. Sci-Pile opens
-its own review tab and lists every selected reference as **Missing PDF**, **PDF
-already attached**, or **DOI unavailable**. Missing-PDF records with an
-identified DOI are checked by default; they can be selected individually or
-with **Select all missing PDFs** before starting.
+its own review tab and lists only selected references that do not already have
+a PDF. Missing-PDF records with an identified DOI are checked by default; they
+can be selected individually or with **Select all missing PDFs** before
+starting.
+
+Paperpile virtualizes long library lists, so only a small portion may exist in
+the visible page at once. When the selection is larger than those visible rows,
+Sci-Pile asks Paperpile for its complete selected-reference export. This allows
+**Select all** to cover the whole filtered library rather than only the first
+screen of results. The export is captured inside the page and does not replace
+the contents of the system clipboard.
 
 The batch queue processes references one at a time so Paperpile's attachment
 bridge is not asked to run overlapping imports. If a source needs browser

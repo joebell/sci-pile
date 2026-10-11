@@ -311,25 +311,27 @@ async function handleCreatePaperpileScan(message, sender) {
   }
 
   const references = sanitizePaperpileReferences(message.references);
-  if (!references.length) {
+  const selectionCount = Number.isSafeInteger(Number(message.selectionCount))
+    ? Math.max(Number(message.selectionCount), references.length)
+    : references.length;
+  if (!selectionCount) {
     throw new Error("Select one or more Paperpile references before starting a scan.");
   }
+  const missingReferences = references.filter((reference) => !reference.hasPdf);
 
   const scan = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     sourceTabId: senderTab.id,
     status: "identifying",
-    total: references.length,
-    references: references.map((reference, index) => ({
+    total: missingReferences.length,
+    totalSelected: selectionCount,
+    excludedAttached: references.length - missingReferences.length,
+    references: missingReferences.map((reference, index) => ({
       ...reference,
       id: `reference-${index + 1}`,
-      missingPdf: !reference.hasPdf,
-      state: reference.hasPdf
-        ? "already-attached"
-        : reference.doi
-          ? "ready"
-          : "identifying",
+      missingPdf: true,
+      state: reference.doi ? "ready" : "identifying",
       doiMatch: null,
       error: null,
       jobId: null,
@@ -354,7 +356,7 @@ async function handleCreatePaperpileScan(message, sender) {
     await saveScan(latest);
   });
 
-  return { scanId: scan.id, count: scan.total };
+  return { scanId: scan.id, count: scan.total, totalSelected: scan.totalSelected };
 }
 
 async function handleStartPaperpileScan(message, sender) {
@@ -426,7 +428,7 @@ function sanitizePaperpileReferences(references) {
   const clean = (value, limit) => typeof value === "string"
     ? value.replace(/[\u200b-\u200f\u2060\ufeff]/g, "").trim().replace(/\s+/g, " ").slice(0, limit)
     : "";
-  return references.slice(0, 250).map((reference) => {
+  return references.slice(0, 5_000).map((reference) => {
     const year = Number(reference?.year);
     return {
       title: clean(reference?.title, 1_000),
@@ -434,6 +436,7 @@ function sanitizePaperpileReferences(references) {
       year: Number.isInteger(year) && year >= 1000 && year <= 3000 ? year : null,
       doi: normalizeDoi(reference?.doi),
       hasPdf: reference?.hasPdf === true,
+      paperpileId: clean(reference?.paperpileId, 200),
     };
   }).filter((reference) => reference.title);
 }
