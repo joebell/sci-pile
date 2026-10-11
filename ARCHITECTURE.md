@@ -151,7 +151,10 @@ available, the internal bridge should be replaced by supported OAuth endpoints.
 ### Extension components
 
 - **Popup/side panel:** current work, ranked locations, provenance, and actions.
-- **Paperpile content script:** reads only the visible selected reference metadata and optionally adds a small `Find full text` affordance beside `Add PDF`. DOM integration must be treated as optional enhancement, not the only input path.
+- **Paperpile content script:** captures the selected reference's visible DOI
+  when its `Add PDF` control is activated and inserts an optional
+  `Find PDF with sci-pile` item into the resulting menu. DOM integration is a
+  feature-detected enhancement, not the only input path.
 - **Background service worker:** resolver orchestration, caching, timeouts,
   redirects, permission requests, downloads, and interaction-state recovery.
 - **Offscreen HTML parser:** standard metadata and general CAPTCHA/login

@@ -63,9 +63,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  const operation = message.type === "resolve-scholar-result"
-    ? handleScholarResult(message, sender)
-    : handleStatusAction(message);
+  let operation;
+  if (message.type === "resolve-scholar-result") {
+    operation = handleScholarResult(message, sender);
+  } else if (message.type === "resolve-paperpile-reference") {
+    operation = handlePaperpileReference(message, sender);
+  } else {
+    operation = handleStatusAction(message);
+  }
   void operation
     .then((result) => sendResponse({ ok: true, result }))
     .catch((error) => sendResponse({ ok: false, error: errorMessage(error) }));
@@ -252,6 +257,26 @@ async function handleScholarResult(message, sender) {
   });
 
   return { doi, match: doiLookup?.match ?? null };
+}
+
+async function handlePaperpileReference(message, sender) {
+  const senderTab = sender?.tab;
+  if (!Number.isInteger(senderTab?.id) || !isPaperpileLibraryUrl(senderTab.url)) {
+    throw new Error("Sci-Pile accepts library-menu requests only from Paperpile.");
+  }
+
+  const doi = normalizeDoi(message.doi);
+  if (!doi) {
+    throw new Error("Sci-Pile could not identify a valid DOI for this reference.");
+  }
+
+  void resolvePdfForDoi(senderTab, doi, {
+    source: "paperpile-library-menu",
+  }).catch((error) => {
+    console.error("Sci-Pile Paperpile-menu lookup failed after launch", error);
+  });
+
+  return { doi };
 }
 
 function sanitizeScholarResult(result) {

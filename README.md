@@ -126,6 +126,15 @@ This integration currently targets `https://scholar.google.com/`. Google
 Scholar's result markup is not a documented integration surface, so the button
 is isolated in its own content script and guarded against duplicate insertion.
 
+### Paperpile library menu
+
+For a selected Paperpile reference that has an identifiable DOI and no main
+PDF, Sci-Pile adds **Find PDF with sci-pile** to Paperpile's **Add PDF** menu.
+The option sends that reference's DOI directly into the same resolver, avoiding
+an ambiguous scan of other references visible in the library. The integration
+is feature-detected and silently stays out of the menu if Paperpile changes its
+undocumented page structure; the toolbar action remains available as a fallback.
+
 The extension then opens or reuses `app.paperpile.com`, activates that tab so a
 cold Paperpile session can finish initializing, and asks Paperpile's own
 installed extension to:

@@ -25,6 +25,14 @@
       "css": ["src/scholar/scholar.css"],
       "js": ["src/scholar/scholar.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://app.paperpile.com/my-library/*"],
+      "js": [
+        "src/paperpile/paperpile-menu-core.js",
+        "src/paperpile/paperpile-menu.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "background": {
