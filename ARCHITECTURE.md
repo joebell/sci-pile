@@ -13,6 +13,15 @@ and opens an extension-owned review page. Missing-PDF rows without a DOI in the
 DOM use the same conservative Crossref matcher before they become selectable.
 The background worker then resolves and attaches the checked rows sequentially.
 
+The same main-menu integration also exposes **Repair Website references with
+sci-pile…**. It exports the complete selection, keeps only `PP_WEBSITE` records,
+identifies the scholarly work behind each saved URL, and processes checked rows
+sequentially. A repair creates or finds a distinct DOI record in the same
+library, unions the original folder and label ids into it, reads the target back
+to verify every membership, and only then moves the obsolete Website record to
+Paperpile's Trash. A failed create, membership update, or verification leaves
+the Website record untouched.
+
 ## Scope and boundary
 
 The product goal is a fast fallback when a Paperpile reference has no attached PDF: identify the work, locate a copy the user is authorized to access, and attach or import it into Paperpile with as little friction as possible.
@@ -67,6 +76,9 @@ same local models and job queue as Paperpile itself:
   download override.
 - `utils.addPdfCrawlJob` downloads and attaches a supplied local PDF candidate.
 - `utils.openPubInWebapp` focuses the resulting reference in the library.
+- `api-backend.getPub` reads the authoritative local publication before and
+  after a Website repair, while `data-layer.updatePublication` performs synced
+  folder/label merging and the final recoverable move to Trash.
 
 The 1.5.1188 content-script relay uses the `new-` action prefix and preserves
 `idType: "request"` when returning a background response to the web app. Bridge
@@ -165,10 +177,12 @@ available, the internal bridge should be replaced by supported OAuth endpoints.
   when its `Add PDF` control is activated and inserts an optional
   `Find PDF with sci-pile` item into the resulting menu. It also feature-detects
   the main reference-actions menu, snapshots selected rows and their local PDF
-  state, and inserts `Scan with sci-pile for missing PDFs…`.
-- **Batch review page:** lists selected records and their PDF/DOI state, supports
-  individual and select-all controls, and surfaces per-record interaction steps
-  without opening a status tab for every queued DOI.
+  state, and inserts `Scan with sci-pile for missing PDFs…` and `Repair Website
+  references with sci-pile…`.
+- **Batch review page:** lists selected records and their PDF/DOI or Website
+  repair state, supports individual and select-all controls, and surfaces
+  per-record interaction steps without opening a status tab for every queued
+  DOI.
 - **Background service worker:** resolver orchestration, caching, timeouts,
   redirects, permission requests, downloads, interaction-state recovery, and a
   sequential Paperpile batch queue.

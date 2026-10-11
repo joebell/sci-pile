@@ -169,7 +169,8 @@ input[type="checkbox"] {
 
 .badge.attached,
 .badge.paperpile-queued,
-.badge.already-attached {
+.badge.already-attached,
+.badge.repaired {
   background: #e6f6eb;
   color: #176c33;
 }
@@ -177,6 +178,11 @@ input[type="checkbox"] {
 .badge.attention {
   background: #fff0d9;
   color: #8a5600;
+}
+
+.badge.repairing {
+  background: #fff6dd;
+  color: #755600;
 }
 
 .badge.failed,

@@ -7,6 +7,8 @@ const selectAll = document.querySelector("#select-all");
 const selectionCount = document.querySelector("#selection-count");
 const startButton = document.querySelector("#start");
 const copyButton = document.querySelector("#copy-diagnostics");
+const pageTitle = document.querySelector("#page-title");
+const selectAllLabel = document.querySelector("#select-all-label");
 const selectedIds = new Set();
 const knownSelectableIds = new Set();
 const jobs = new Map();
@@ -39,9 +41,10 @@ startButton.addEventListener("click", async () => {
   startButton.textContent = "Starting…";
   clearNotice();
   try {
+    const repair = isWebsiteRepair(renderedScan);
     const response = await chrome.runtime.sendMessage({
       target: "background",
-      type: "start-paperpile-scan",
+      type: repair ? "start-paperpile-repair" : "start-paperpile-scan",
       scanId: renderedScan.id,
       referenceIds: [...selectedIds],
     });
@@ -51,7 +54,7 @@ startButton.addEventListener("click", async () => {
   } catch (error) {
     showNotice(error instanceof Error ? error.message : String(error));
     startButton.disabled = false;
-    startButton.textContent = "Download and attach selected PDFs";
+    startButton.textContent = startLabel(renderedScan);
   }
 });
 
@@ -133,6 +136,14 @@ async function acceptScan(scan) {
 
 function render(scan) {
   renderedScan = scan;
+  const repair = isWebsiteRepair(scan);
+  document.title = repair
+    ? "Sci-Pile — Repair Website references"
+    : "Sci-Pile — Missing PDF scan";
+  pageTitle.textContent = repair ? "Repair Website references" : "Missing PDF scan";
+  selectAllLabel.textContent = repair
+    ? "Select all repairable Websites"
+    : "Select all missing PDFs";
   const selectable = selectableReferences(scan);
   for (const reference of selectable) {
     if (!knownSelectableIds.has(reference.id)) {
@@ -158,18 +169,18 @@ function render(scan) {
   selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
   selectionCount.textContent = scan.status === "ready"
     ? `${selectedCount} of ${selectable.length} eligible selected`
-    : progressText(counts);
+    : progressText(counts, repair);
 
   startButton.disabled = scan.status !== "ready" || selectedCount === 0;
   startButton.textContent = scan.status === "identifying"
-    ? "Identifying papers…"
+    ? repair ? "Identifying linked papers…" : "Identifying papers…"
     : scan.status === "running"
-      ? "Downloading and attaching…"
+      ? repair ? "Repairing Website references…" : "Downloading and attaching…"
       : scan.status === "attention-required"
         ? "Source page needs attention"
         : scan.status === "complete"
-          ? "Batch complete"
-          : "Download and attach selected PDFs";
+          ? repair ? "Repairs complete" : "Batch complete"
+          : startLabel(scan);
 }
 
 function referenceItem(reference, scan) {
@@ -193,8 +204,17 @@ function referenceItem(reference, scan) {
   const details = document.createElement("div");
   const title = document.createElement("p");
   title.className = "reference-title";
-  title.textContent = reference.title;
+  title.textContent = reference.resolvedTitle && reference.resolvedTitle !== reference.title
+    ? reference.resolvedTitle
+    : reference.title;
   details.append(title);
+
+  if (isWebsiteRepair(scan) && reference.resolvedTitle && reference.resolvedTitle !== reference.title) {
+    const originalTitle = document.createElement("p");
+    originalTitle.className = "reference-meta";
+    originalTitle.textContent = `Original Website record: ${reference.title}`;
+    details.append(originalTitle);
+  }
 
   const metadata = document.createElement("p");
   metadata.className = "reference-meta";
@@ -210,6 +230,27 @@ function referenceItem(reference, scan) {
     details.append(doi);
   }
 
+  if (isWebsiteRepair(scan) && reference.url) {
+    const url = document.createElement("p");
+    url.className = "reference-meta doi";
+    url.textContent = reference.url;
+    details.append(url);
+  }
+
+  if (isWebsiteRepair(scan) && (reference.folders?.length || reference.labels?.length)) {
+    const collections = document.createElement("p");
+    collections.className = "reference-meta";
+    const parts = [];
+    if (reference.folders?.length) {
+      parts.push(`${reference.folders.length} folder${reference.folders.length === 1 ? "" : "s"}`);
+    }
+    if (reference.labels?.length) {
+      parts.push(`${reference.labels.length} tag${reference.labels.length === 1 ? "" : "s"}`);
+    }
+    collections.textContent = `${parts.join(" and ")} will be preserved`;
+    details.append(collections);
+  }
+
   if (reference.error) {
     const error = document.createElement("p");
     error.className = "reference-error";
@@ -221,11 +262,73 @@ function referenceItem(reference, scan) {
     details.append(interactionActions(reference));
   }
 
+  if (isWebsiteRepair(scan) && reference.state === "unresolved") {
+    details.append(repairIdentificationActions(reference));
+  }
+
   const badge = document.createElement("span");
   badge.className = `badge ${reference.state}`;
-  badge.textContent = stateLabel(reference.state);
+  badge.textContent = stateLabel(reference.state, isWebsiteRepair(scan));
   item.append(checkbox, details, badge);
   return item;
+}
+
+function repairIdentificationActions(reference) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "reference-actions";
+
+  if (reference.permissionOrigin) {
+    const allowButton = document.createElement("button");
+    allowButton.type = "button";
+    allowButton.textContent = `Allow ${displayOrigin(reference.permissionOrigin)} & retry`;
+    allowButton.addEventListener("click", () => void allowAndRetryRepair(allowButton, reference));
+    wrapper.append(allowButton);
+  } else {
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.textContent = "Retry identification";
+    retryButton.addEventListener("click", () => void retryRepairIdentification(retryButton, reference));
+    wrapper.append(retryButton);
+  }
+
+  if (reference.url) {
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.textContent = "Open Website";
+    openButton.addEventListener("click", () => void runJobAction(openButton, {
+      target: "background",
+      type: "open-paperpile-repair-website",
+      scanId: renderedScan.id,
+      referenceId: reference.id,
+    }));
+    wrapper.append(openButton);
+  }
+  return wrapper;
+}
+
+async function allowAndRetryRepair(button, reference) {
+  button.disabled = true;
+  clearNotice();
+  try {
+    const granted = await chrome.permissions.contains({ origins: [reference.permissionOrigin] }) ||
+      await chrome.permissions.request({ origins: [reference.permissionOrigin] });
+    if (!granted) {
+      throw new Error(`Sci-Pile needs access to ${displayOrigin(reference.permissionOrigin)} to inspect this Website.`);
+    }
+    await retryRepairIdentification(button, reference);
+  } catch (error) {
+    button.disabled = false;
+    showNotice(error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function retryRepairIdentification(button, reference) {
+  await runJobAction(button, {
+    target: "background",
+    type: "retry-paperpile-repair-identification",
+    scanId: renderedScan.id,
+    referenceId: reference.id,
+  });
 }
 
 function interactionActions(reference) {
@@ -316,17 +419,20 @@ function countStates(references) {
 }
 
 function scanSummary(scan, counts) {
+  if (isWebsiteRepair(scan)) {
+    return repairSummary(scan, counts);
+  }
   if (scan.status === "identifying") {
     return "Checking the selected references for attached PDFs and identifying missing-PDF records by DOI…";
   }
   if (scan.status === "running") {
-    return `Working through the selected missing PDFs one at a time. ${progressText(counts)}`;
+    return `Working through the selected missing PDFs one at a time. ${progressText(counts, false)}`;
   }
   if (scan.status === "attention-required") {
     return "A source needs attention. Complete that row, or skip the unavailable paper, to continue the queue.";
   }
   if (scan.status === "complete") {
-    return `Finished. ${progressText(counts)}`;
+    return `Finished. ${progressText(counts, false)}`;
   }
   const missing = (counts.ready ?? 0) + (counts.unresolved ?? 0);
   const totalSelected = scan.totalSelected ?? scan.total;
@@ -340,7 +446,37 @@ function scanSummary(scan, counts) {
   return `${missing} of ${totalSelected} selected reference${totalSelected === 1 ? " is" : "s are"} missing a PDF.${omitted}`;
 }
 
-function progressText(counts) {
+function repairSummary(scan, counts) {
+  if (scan.status === "identifying") {
+    return "Following the selected Website links and identifying their scholarly references…";
+  }
+  if (scan.status === "running") {
+    return `Repairing the selected Website records one at a time. ${progressText(counts, true)}`;
+  }
+  if (scan.status === "complete") {
+    return `Finished. ${progressText(counts, true)}`;
+  }
+  const totalSelected = scan.totalSelected ?? scan.total;
+  const repairable = counts.ready ?? 0;
+  const unresolved = counts.unresolved ?? 0;
+  const omitted = scan.excludedNonWebsite ?? 0;
+  if (!scan.total) {
+    return `None of the ${totalSelected} selected reference${totalSelected === 1 ? " is" : "s are"} Website records.`;
+  }
+  const omittedText = omitted
+    ? ` ${omitted} non-Website reference${omitted === 1 ? " was" : "s were"} omitted.`
+    : "";
+  return `${repairable} repairable Website reference${repairable === 1 ? "" : "s"}; ` +
+    `${unresolved} could not yet be identified.${omittedText}`;
+}
+
+function progressText(counts, repair = false) {
+  if (repair) {
+    const repaired = counts.repaired ?? 0;
+    const failed = counts.failed ?? 0;
+    const waiting = (counts.queued ?? 0) + (counts.repairing ?? 0);
+    return `${repaired} repaired, ${failed} unsuccessful, ${waiting} remaining.`;
+  }
   const attached = counts.attached ?? 0;
   const paperpileQueued = counts["paperpile-queued"] ?? 0;
   const failed = (counts.failed ?? 0) + (counts["not-found"] ?? 0);
@@ -348,7 +484,19 @@ function progressText(counts) {
   return `${attached} attached, ${paperpileQueued} queued in Paperpile, ${failed} unsuccessful, ${waiting} remaining.`;
 }
 
-function stateLabel(state) {
+function stateLabel(state, repair = false) {
+  if (repair) {
+    return ({
+      identifying: "Inspecting Website",
+      ready: "Ready to repair",
+      unresolved: "Not identified",
+      queued: "Queued",
+      repairing: "Repairing",
+      repaired: "Repaired",
+      failed: "Repair failed",
+      skipped: "Not selected",
+    })[state] ?? state;
+  }
   return ({
     "already-attached": "PDF already attached",
     identifying: "Identifying DOI",
@@ -362,7 +510,19 @@ function stateLabel(state) {
     failed: "Import failed",
     "not-found": "No PDF found",
     skipped: "Not selected",
+    repairing: "Repairing",
+    repaired: "Repaired",
   })[state] ?? state;
+}
+
+function isWebsiteRepair(scan) {
+  return scan?.kind === "website-repair";
+}
+
+function startLabel(scan) {
+  return isWebsiteRepair(scan)
+    ? "Repair selected Website references"
+    : "Download and attach selected PDFs";
 }
 
 function displayOrigin(pattern) {

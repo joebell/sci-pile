@@ -16,7 +16,9 @@
   const MENU_ITEM_SELECTOR = '[data-testid="menu-item"][role="menuitem"]';
   const PDF_ITEM_ATTRIBUTE = "data-scipile-paperpile-menu-item";
   const SCAN_ITEM_ATTRIBUTE = "data-scipile-paperpile-scan-item";
+  const REPAIR_ITEM_ATTRIBUTE = "data-scipile-paperpile-repair-item";
   const SCAN_LABEL = "Scan with sci-pile for missing PDFs…";
+  const REPAIR_LABEL = "Repair Website references with sci-pile…";
   const TARGET_MAX_AGE_MS = 15_000;
   const EXPORT_CAPTURE_TIMEOUT_MS = 60_000;
   const EXPORT_REQUEST_SOURCE = "sci-pile-paperpile-menu";
@@ -86,13 +88,15 @@
     for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
       installPdfMenuItem(menu);
       installScanMenuItem(menu);
+      installRepairMenuItem(menu);
     }
   }
 
   function installPdfMenuItem(menu) {
     const nativeItems = [...menu.querySelectorAll(MENU_ITEM_SELECTOR)]
       .filter((item) => !item.hasAttribute(PDF_ITEM_ATTRIBUTE))
-      .filter((item) => !item.hasAttribute(SCAN_ITEM_ATTRIBUTE));
+      .filter((item) => !item.hasAttribute(SCAN_ITEM_ATTRIBUTE))
+      .filter((item) => !item.hasAttribute(REPAIR_ITEM_ATTRIBUTE));
     const labels = nativeItems.map(menuItemLabel);
     if (!core.isPaperpilePdfMenu(labels)) {
       return;
@@ -116,7 +120,8 @@
   function installScanMenuItem(menu) {
     const nativeItems = [...menu.querySelectorAll(MENU_ITEM_SELECTOR)]
       .filter((item) => !item.hasAttribute(PDF_ITEM_ATTRIBUTE))
-      .filter((item) => !item.hasAttribute(SCAN_ITEM_ATTRIBUTE));
+      .filter((item) => !item.hasAttribute(SCAN_ITEM_ATTRIBUTE))
+      .filter((item) => !item.hasAttribute(REPAIR_ITEM_ATTRIBUTE));
     const labels = nativeItems.map(menuItemLabel);
     if (!core.isPaperpileMainMenu(labels)) {
       return;
@@ -135,6 +140,33 @@
       findOnlineItem.after(item);
     }
     configureScanMenuItem(item);
+  }
+
+  function installRepairMenuItem(menu) {
+    const nativeItems = [...menu.querySelectorAll(MENU_ITEM_SELECTOR)]
+      .filter((item) => !item.hasAttribute(PDF_ITEM_ATTRIBUTE))
+      .filter((item) => !item.hasAttribute(SCAN_ITEM_ATTRIBUTE))
+      .filter((item) => !item.hasAttribute(REPAIR_ITEM_ATTRIBUTE));
+    const labels = nativeItems.map(menuItemLabel);
+    if (!core.isPaperpileMainMenu(labels)) {
+      return;
+    }
+
+    const scanItem = menu.querySelector(`[${SCAN_ITEM_ATTRIBUTE}]`);
+    const findOnlineItem = nativeItems.find(
+      (item) => core.normalizeLabel(menuItemLabel(item)) === "Find PDFs online",
+    );
+    const template = scanItem ?? findOnlineItem;
+    if (!template) {
+      return;
+    }
+
+    let item = menu.querySelector(`[${REPAIR_ITEM_ATTRIBUTE}]`);
+    if (!item) {
+      item = createRepairMenuItem(template);
+      template.after(item);
+    }
+    configureRepairMenuItem(item);
   }
 
   function menuItemLabel(item) {
@@ -243,6 +275,40 @@
     }
   }
 
+  function createRepairMenuItem(template) {
+    const item = cloneMenuItem(template, REPAIR_ITEM_ATTRIBUTE);
+    item.removeAttribute(SCAN_ITEM_ATTRIBUTE);
+    item.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void startRepair(item);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void startRepair(item);
+      }
+    });
+    return item;
+  }
+
+  function configureRepairMenuItem(item) {
+    const count = selectedCount();
+    if (!["working", "started"].includes(item.dataset.scipileState)) {
+      item.dataset.scipileState = "ready";
+      setItemLabel(item, REPAIR_LABEL);
+    }
+    item.setAttribute("aria-label", REPAIR_LABEL);
+    if (count > 0) {
+      item.removeAttribute("aria-disabled");
+      item.title = `Review ${count} selected Paperpile reference${count === 1 ? "" : "s"} for Website repairs`;
+    } else {
+      item.setAttribute("aria-disabled", "true");
+      item.title = "Select one or more Paperpile references first.";
+    }
+  }
+
   function selectedReferences() {
     return [...document.querySelectorAll(REFERENCE_SELECTOR)]
       .filter((reference) => reference.querySelector('input[type="checkbox"]')?.checked)
@@ -326,6 +392,50 @@
       item.removeAttribute("aria-disabled");
       item.title = error instanceof Error ? error.message : String(error);
       setItemLabel(item, SCAN_LABEL);
+    }
+  }
+
+  async function startRepair(item) {
+    if (["working", "started"].includes(item.dataset.scipileState)) {
+      return;
+    }
+
+    const selectionCount = selectedCount();
+    if (!selectionCount) {
+      return;
+    }
+
+    item.dataset.scipileState = "working";
+    item.setAttribute("aria-disabled", "true");
+    setItemLabel(item, "Opening sci-pile review…");
+
+    try {
+      // Website repair always uses Paperpile's complete JSON export because
+      // record ids, URLs, folders, and labels are not all present in grid rows.
+      const references = await exportSelectedReferences();
+      if (selectionCount > references.length) {
+        throw new Error(
+          `Paperpile reports ${selectionCount} selected references, but Sci-Pile could only read ` +
+          `${references.length}. Reload this Paperpile tab and try again.`,
+        );
+      }
+      const response = await chrome.runtime.sendMessage({
+        target: "background",
+        type: "create-paperpile-repair",
+        references,
+        selectionCount,
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error ?? "Sci-Pile could not start the Website repair review.");
+      }
+      item.dataset.scipileState = "started";
+      item.title = "The Sci-Pile Website repair tab is open.";
+      setItemLabel(item, "sci-pile repair opened");
+    } catch (error) {
+      item.dataset.scipileState = "error";
+      item.removeAttribute("aria-disabled");
+      item.title = error instanceof Error ? error.message : String(error);
+      setItemLabel(item, REPAIR_LABEL);
     }
   }
 

@@ -9,9 +9,10 @@ an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results and a **Find PDF with
 sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
-menu also has a batch scan for selected references with missing PDFs.
+menu also has batch tools for selected references with missing PDFs and for
+repairing records that Paperpile mistakenly imported as Websites.
 
-Sci-Pile is currently version 0.9.2. It:
+Sci-Pile is currently version 0.10.0. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -30,6 +31,10 @@ Sci-Pile is currently version 0.9.2. It:
    DOI-bearing reference in Paperpile's library.
 10. Adds **Scan with sci-pile for missing PDFs…** to Paperpile's main menu,
     with a review page for selecting and processing missing-PDF references.
+11. Adds **Repair Website references with sci-pile…** to the same menu. It
+    follows each selected Website link, identifies the paper, finds or creates
+    the proper Paperpile reference, preserves folders and tags, and moves the
+    obsolete Website record to Paperpile's Trash only after verification.
 
 The extension ships with no source list. Users configure sources they are
 authorized to use. Automatic import requires Paperpile's own browser extension
@@ -117,7 +122,7 @@ approval.
 
 ## Use
 
-Start a lookup in any of four ways:
+Start a lookup or library repair in any of five ways:
 
 - Open an article page containing a DOI and click the Sci-Pile toolbar button.
 - Click the **sci-pile** button beneath a Google Scholar result.
@@ -125,6 +130,8 @@ Start a lookup in any of four ways:
   **Find PDF with sci-pile**.
 - Select one or more Paperpile references, open its main menu, and choose
   **Scan with sci-pile for missing PDFs…**.
+- Select one or more Paperpile Website records, open the main menu, and choose
+  **Repair Website references with sci-pile…**.
 
 For a single-paper lookup, a status tab shows progress and every failed attempt.
 When a source returns
@@ -181,6 +188,24 @@ choose **Skip paper & continue**; closing its opened source tab has the same
 effect. The row is recorded as unsuccessful and the next queued reference
 starts automatically. Records that already have a PDF are never sent to the
 resolver by the batch command.
+
+To repair references that were accidentally imported as Websites, select the
+records and choose **Repair Website references with sci-pile…**. Sci-Pile uses
+Paperpile's complete selected-reference export, so this also works for long,
+virtualized selections. The review page lists only Website records, follows
+their saved links, and identifies the linked scholarly work from a DOI declared
+in the URL or standard page metadata. If no DOI is declared, the same
+conservative Crossref title matching used elsewhere can identify it.
+
+Each checked repair runs as a guarded transaction. Sci-Pile first finds or
+creates a distinct DOI-based reference in the same Paperpile library. It then
+merges every folder and tag from the Website record into that reference and
+reads the replacement back from Paperpile to verify those memberships. Only
+after the replacement and all memberships are confirmed does it move the old
+Website record to Paperpile's Trash. If the target reference already exists,
+the folders and tags are merged into it rather than overwritten. Any failure
+leaves the original Website record untouched; Trash remains recoverable through
+Paperpile.
 
 The extension then opens or reuses `app.paperpile.com`, activates that tab so a
 cold Paperpile session can finish initializing, and asks Paperpile's own
@@ -258,10 +283,14 @@ restart.
 - The Google Scholar content script reads result metadata only when rendering
   its local buttons. When a clicked result has no visible DOI, its displayed
   title and citation are sent to Crossref for DOI matching.
-- The Paperpile content script reads only selected reference rows after the
-  batch command is chosen. PDF presence is checked locally. For a missing-PDF
+- The Paperpile content script reads only selected references after a batch
+  command is chosen. PDF presence is checked locally. For a missing-PDF
   row whose DOI is not exposed in the page, its displayed title, author,
   journal, and year are sent to Crossref for conservative DOI matching.
+  Website repair additionally reads the selected records' saved URLs, folder
+  ids, tag ids, and library id from Paperpile's local JSON export. A linked
+  page is sent to Crossref only when its standard metadata lacks a DOI and a
+  conservative title match is needed.
 - By default, persistent host access is requested only for origins represented
   in the saved prefix list or for a redirected source host that the user
   explicitly approves from the status page. Enabling **Automatically follow
@@ -323,3 +352,6 @@ For implementation details and the Paperpile integration design, see
 - The Paperpile menu integrations depend on Paperpile's undocumented DOM. They
   are feature-detected and may temporarily disappear if Paperpile changes its
   menus or reference-row markup.
+- Website repair depends on standard DOI/citation metadata in the linked page.
+  JavaScript-only pages or links requiring authentication may need to be opened
+  manually before identification can be retried.

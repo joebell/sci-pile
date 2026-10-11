@@ -147,7 +147,49 @@
       year,
       doi: findDoiInValues(identifierValues),
       hasPdf: hasAttachedPdf(reference),
+      pubtype: cleanReferenceText(reference.pubtype ?? reference.type).toUpperCase(),
+      urls: httpUrlsFromReference(reference),
+      folders: collectionIds([reference.folders, reference.folder_ids].flat()),
+      labels: collectionIds([reference.labels, reference.label_ids, reference.tags].flat()),
+      libraryId: cleanReferenceText(
+        reference.library_id ?? reference.libraryId ?? reference._library_id,
+      ) || "personal",
     };
+  }
+
+  function httpUrlsFromReference(reference) {
+    const values = [];
+    collectStrings(reference?.url, values);
+    collectStrings(reference?.urls, values);
+    const urls = [];
+    const seen = new Set();
+    for (const value of values) {
+      let candidate = cleanReferenceText(value);
+      if (/^www\./i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      } else if (/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      }
+      try {
+        const url = new URL(candidate);
+        if (["http:", "https:"].includes(url.protocol) && !seen.has(url.href)) {
+          seen.add(url.href);
+          urls.push(url.href);
+        }
+      } catch {
+        // Ignore malformed Website fields; the review page reports no usable URL.
+      }
+    }
+    return urls.slice(0, 20);
+  }
+
+  function collectionIds(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return [...new Set(value.map((entry) => cleanReferenceText(
+      typeof entry === "string" ? entry : entry?._id ?? entry?.id,
+    )).filter(Boolean))];
   }
 
   function hasAttachedPdf(reference) {
@@ -182,6 +224,7 @@
     cleanReferenceText,
     isPaperpileMainMenu,
     isPaperpilePdfMenu,
+    httpUrlsFromReference,
     normalizeDoi,
     normalizeLabel,
     referenceFromPaperpileExport,

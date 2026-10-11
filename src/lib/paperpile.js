@@ -94,6 +94,28 @@ export function hasPaperpileMainPdf(publication) {
   });
 }
 
+export function paperpileCollectionIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((entry) => {
+    if (typeof entry === "string") {
+      return entry.trim();
+    }
+    const id = entry?._id ?? entry?.id;
+    return typeof id === "string" ? id.trim() : "";
+  }).filter(Boolean))];
+}
+
+export function mergePaperpileCollectionIds(...values) {
+  return [...new Set(values.flatMap(paperpileCollectionIds))];
+}
+
+export function hasPaperpileCollectionIds(actual, required) {
+  const available = new Set(paperpileCollectionIds(actual));
+  return paperpileCollectionIds(required).every((id) => available.has(id));
+}
+
 /**
  * Prefer Paperpile's returned attachment flag over the pre-import snapshot.
  * The duplicate lookup may return attachment ids without their article_pdf

@@ -10,6 +10,9 @@ import {
   hasPaperpileMainPdf,
   isPaperpileLibraryUrl,
   isPaperpileAutoDownloadEnabled,
+  hasPaperpileCollectionIds,
+  mergePaperpileCollectionIds,
+  paperpileCollectionIds,
 } from "../src/lib/paperpile.js";
 
 test("accepts Paperpile library tabs and rejects standalone viewer tabs", () => {
@@ -79,6 +82,22 @@ test("detects Paperpile's main-PDF flag", () => {
   assert.equal(hasPaperpileMainPdf({ attachments: [{ article_pdf: 1 }] }), true);
   assert.equal(hasPaperpileMainPdf({ attachments: [{ mimeType: "application/pdf", article_pdf: 0 }] }), false);
   assert.equal(hasPaperpileMainPdf({ attachments: [{ mimeType: "text/plain" }] }), false);
+});
+
+test("normalizes, merges, and verifies Paperpile folder and tag ids", () => {
+  assert.deepEqual(
+    paperpileCollectionIds(["folder-1", { _id: "folder-2" }, { id: "folder-1" }]),
+    ["folder-1", "folder-2"],
+  );
+  assert.deepEqual(
+    mergePaperpileCollectionIds(["folder-1"], [{ id: "folder-2" }], ["folder-1"]),
+    ["folder-1", "folder-2"],
+  );
+  assert.equal(
+    hasPaperpileCollectionIds(["folder-3", { _id: "folder-1" }], ["folder-1"]),
+    true,
+  );
+  assert.equal(hasPaperpileCollectionIds(["folder-1"], ["folder-2"]), false);
 });
 
 test("classifies Paperpile's completed attachment without replacing a main PDF", () => {
