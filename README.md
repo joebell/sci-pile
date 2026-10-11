@@ -9,7 +9,7 @@ an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results.
 
-Sci-Pile is currently version 0.7.6. It:
+Sci-Pile is currently version 0.8.0. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
