@@ -30,6 +30,10 @@ import {
 } from "./lib/paperpile.js";
 import { probeDocument } from "./lib/pdf.js";
 import {
+  hasAllHttpHostAccess,
+  hasHttpHostAccess,
+} from "./lib/permissions.js";
+import {
   analyzeWebsiteRepairUrl,
   googleScholarSearchUrl,
 } from "./lib/website-repair.js";
@@ -101,6 +105,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     operation = handleCreatePaperpileRepair(message, sender);
   } else if (message.type === "retry-paperpile-repair-identification") {
     operation = handleRetryPaperpileRepairIdentification(message, sender);
+  } else if (message.type === "retry-paperpile-repair-permissions") {
+    operation = handleRetryPaperpileRepairPermissions(message, sender);
   } else if (message.type === "open-paperpile-repair-website") {
     operation = handleOpenPaperpileRepairWebsite(message, sender);
   } else if (message.type === "open-paperpile-repair-scholar") {
@@ -469,6 +475,39 @@ async function handleRetryPaperpileRepairIdentification(message, sender) {
   return { scanId: scan.id, referenceId: reference.id };
 }
 
+async function handleRetryPaperpileRepairPermissions(message, sender) {
+  assertBatchReviewSender(sender);
+  if (!await hasAllHttpHostAccess()) {
+    throw new Error("Chrome has not granted Sci-Pile access to all Website hosts.");
+  }
+
+  const scan = await getScan(message.scanId);
+  if (!scan || scan.kind !== "website-repair") {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (["running", "complete"].includes(scan.status)) {
+    throw new Error("Website identification cannot change after the repair queue starts.");
+  }
+
+  const blocked = scan.references.filter((reference) =>
+    reference.state === "unresolved" && reference.permissionOrigin
+  );
+  if (!blocked.length) {
+    return { scanId: scan.id, retried: 0 };
+  }
+
+  for (const reference of blocked) {
+    reference.state = "identifying";
+    reference.error = null;
+    reference.permissionOrigin = null;
+  }
+  scan.status = "identifying";
+  scan.updatedAt = new Date().toISOString();
+  await saveScan(scan);
+  await identifyPaperpileRepairReferences(scan.id);
+  return { scanId: scan.id, retried: blocked.length };
+}
+
 async function handleOpenPaperpileRepairWebsite(message, sender) {
   assertBatchReviewSender(sender);
   const scan = await getScan(message.scanId);
@@ -658,7 +697,7 @@ async function identifyWebsiteReference(reference) {
   }
 
   const permissionOrigin = originPatternForUrl(urlAnalysis.url);
-  if (!await chrome.permissions.contains({ origins: [permissionOrigin] })) {
+  if (!await hasHttpHostAccess(permissionOrigin)) {
     return {
       ...resultBase,
       doi: null,

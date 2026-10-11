@@ -1,3 +1,8 @@
+import {
+  ALL_HTTP_ORIGINS,
+  hasHttpHostAccess,
+} from "../lib/permissions.js";
+
 const scanId = new URLSearchParams(location.search).get("scan");
 const scanKey = scanId ? `scan:${scanId}` : null;
 const summary = document.querySelector("#summary");
@@ -6,6 +11,7 @@ const list = document.querySelector("#references");
 const selectAll = document.querySelector("#select-all");
 const selectionCount = document.querySelector("#selection-count");
 const startButton = document.querySelector("#start");
+const allowAllSitesButton = document.querySelector("#allow-all-sites");
 const copyButton = document.querySelector("#copy-diagnostics");
 const pageTitle = document.querySelector("#page-title");
 const selectAllLabel = document.querySelector("#select-all-label");
@@ -16,6 +22,26 @@ let renderedScan = null;
 
 document.querySelector("#open-options").addEventListener("click", () => {
   void chrome.runtime.openOptionsPage();
+});
+
+allowAllSitesButton.addEventListener("click", () => {
+  allowAllSitesButton.disabled = true;
+  allowAllSitesButton.textContent = "Waiting for Chrome…";
+  clearNotice();
+
+  // Keep this request directly inside the click handler. Chrome requires a
+  // user gesture before it will show the optional all-sites access prompt.
+  chrome.permissions.request({ origins: ALL_HTTP_ORIGINS }, (granted) => {
+    if (chrome.runtime.lastError) {
+      finishAllSitesRequestError(chrome.runtime.lastError.message);
+      return;
+    }
+    if (!granted) {
+      finishAllSitesRequestError("All-sites access was not granted. You can still approve each Website separately.");
+      return;
+    }
+    void retryAllPermissionBlockedReferences();
+  });
 });
 
 selectAll.addEventListener("change", () => {
@@ -162,6 +188,13 @@ function render(scan) {
 
   const displayed = scan.references.filter((reference) => reference.state !== "already-attached");
   list.replaceChildren(...displayed.map((reference) => referenceItem(reference, scan)));
+
+  const permissionBlocked = repair && scan.references.some((reference) =>
+    reference.state === "unresolved" && reference.permissionOrigin
+  );
+  allowAllSitesButton.hidden = !permissionBlocked;
+  allowAllSitesButton.disabled = scan.status !== "ready";
+  allowAllSitesButton.textContent = "Allow all Website access & retry";
 
   const selectedCount = selectable.filter((reference) => selectedIds.has(reference.id)).length;
   selectAll.disabled = scan.status !== "ready" || selectable.length === 0;
@@ -355,7 +388,7 @@ async function allowAndRetryRepair(button, reference) {
   button.disabled = true;
   clearNotice();
   try {
-    const granted = await chrome.permissions.contains({ origins: [reference.permissionOrigin] }) ||
+    const granted = await hasHttpHostAccess(reference.permissionOrigin) ||
       await chrome.permissions.request({ origins: [reference.permissionOrigin] });
     if (!granted) {
       throw new Error(`Sci-Pile needs access to ${displayOrigin(reference.permissionOrigin)} to inspect this Website.`);
@@ -365,6 +398,27 @@ async function allowAndRetryRepair(button, reference) {
     button.disabled = false;
     showNotice(error instanceof Error ? error.message : String(error));
   }
+}
+
+async function retryAllPermissionBlockedReferences() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      target: "background",
+      type: "retry-paperpile-repair-permissions",
+      scanId: renderedScan.id,
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error ?? "The permission-blocked Websites could not be retried.");
+    }
+  } catch (error) {
+    finishAllSitesRequestError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function finishAllSitesRequestError(message) {
+  allowAllSitesButton.disabled = false;
+  allowAllSitesButton.textContent = "Allow all Website access & retry";
+  showNotice(message);
 }
 
 async function retryRepairIdentification(button, reference) {

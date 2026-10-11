@@ -12,7 +12,7 @@ sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
 menu also has batch tools for selected references with missing PDFs and for
 repairing records that Paperpile mistakenly imported as Websites.
 
-Sci-Pile is currently version 0.10.1. It:
+Sci-Pile is currently version 0.10.2. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -67,9 +67,10 @@ as an unpacked extension from this repository.
 5. Select the `sci-pile` directory containing `manifest.json`.
 6. The Sci-Pile settings page opens automatically. Add and save the source
    prefixes you want to use, in priority order.
-7. Optionally enable **Automatically follow redirects** and approve Chrome's
+7. Optionally enable **Automatically access source sites** and approve Chrome's
    one-time all-sites prompt. This avoids separate permission prompts when a
-   configured source redirects to another host.
+   Website reference is inspected or a configured source redirects to another
+   host.
 8. Optionally pin Sci-Pile from the browser's Extensions menu for quick access.
 
 After pulling an update, return to `chrome://extensions` and click Sci-Pile's
@@ -114,11 +115,13 @@ Query-style prefixes are also supported, for example
 Saving the settings asks for access to the configured hosts. Removed hosts have
 their access removed automatically.
 
-Enable **Automatically follow redirects** to approve all HTTP and HTTPS source
+Enable **Automatically access source sites** to approve all HTTP and HTTPS
 hosts once. Chrome displays an all-sites permission prompt when this setting is
-enabled. Once approved, Sci-Pile can continue from cross-host redirects without
-asking about every new destination. Leave it disabled to retain per-host
-approval.
+enabled. Once approved, Sci-Pile can inspect linked Website records and continue
+from cross-host redirects without asking about every new destination. The
+Website-repair review page offers the same one-time permission when it first
+encounters a blocked site, then retries every blocked reference together. Leave
+it disabled to retain per-host approval.
 
 ## Use
 
@@ -274,7 +277,7 @@ recognizes standard
 `<embed type="application/pdf">`, `<object type="application/pdf">`, and
 PDF-labelled iframe declarations in the displayed page, and unwraps Chromium's
 built-in PDF-viewer URL. If the source redirects to a different host, Sci-Pile
-continues automatically when **Automatically follow redirects** is enabled.
+continues automatically when **Automatically access source sites** is enabled.
 Otherwise, it shows the redirected host and asks for narrowly scoped access
 when the user chooses **Allow source & continue**. **Continue** remains
 available as a fallback for pages that update without a top-level navigation.
@@ -310,9 +313,9 @@ restart.
   is fetched.
 - By default, persistent host access is requested only for origins represented
   in the saved prefix list or for a redirected source host that the user
-  explicitly approves from the status page. Enabling **Automatically follow
-  redirects** grants Sci-Pile access to all HTTP and HTTPS hosts until that
-  setting is disabled.
+  explicitly approves from the status or repair-review page. Enabling
+  **Automatically access source sites** grants Sci-Pile access to all HTTP and
+  HTTPS hosts until that setting is disabled.
 - Chrome's `tabs` permission is used to identify the final URL of the one source
   tab Sci-Pile opened when a challenge or login redirects it to another host.
   Sci-Pile does not enumerate or retain unrelated browsing history.

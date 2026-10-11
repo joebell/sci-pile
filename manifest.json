@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sci-Pile",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "description": "Resolve a DOI through user-configured sources, save the PDF, and import it into Paperpile.",
   "minimum_chrome_version": "111",
   "permissions": [

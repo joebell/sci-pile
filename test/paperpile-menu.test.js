@@ -160,6 +160,8 @@ test("batch review page is packaged with its module and stylesheet", async () =>
   assert.match(script, /start-paperpile-scan/);
   assert.match(script, /start-paperpile-repair/);
   assert.match(script, /retry-paperpile-repair-identification/);
+  assert.match(script, /retry-paperpile-repair-permissions/);
+  assert.match(html, /Allow all Website access/);
   assert.match(script, /open-paperpile-repair-scholar/);
   assert.match(script, /set-paperpile-repair-doi/);
   assert.match(stylesheet, /\.references/);
