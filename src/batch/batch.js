@@ -233,8 +233,17 @@ function referenceItem(reference, scan) {
   if (isWebsiteRepair(scan) && reference.url) {
     const url = document.createElement("p");
     url.className = "reference-meta doi";
-    url.textContent = reference.url;
+    url.textContent = reference.originalUrl
+      ? `Recovered link: ${reference.url}`
+      : reference.url;
     details.append(url);
+  }
+
+  if (isWebsiteRepair(scan) && reference.originalUrl) {
+    const originalUrl = document.createElement("p");
+    originalUrl.className = "reference-meta doi";
+    originalUrl.textContent = `Original malformed link: ${reference.originalUrl}`;
+    details.append(originalUrl);
   }
 
   if (isWebsiteRepair(scan) && (reference.folders?.length || reference.labels?.length)) {
@@ -303,6 +312,42 @@ function repairIdentificationActions(reference) {
     }));
     wrapper.append(openButton);
   }
+
+  if (reference.searchQuery) {
+    const scholarButton = document.createElement("button");
+    scholarButton.type = "button";
+    scholarButton.textContent = "Search Google Scholar";
+    scholarButton.addEventListener("click", () => void runJobAction(scholarButton, {
+      target: "background",
+      type: "open-paperpile-repair-scholar",
+      scanId: renderedScan.id,
+      referenceId: reference.id,
+    }));
+    wrapper.append(scholarButton);
+  }
+
+  const manual = document.createElement("form");
+  manual.className = "manual-doi";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.inputMode = "url";
+  input.placeholder = "Paste DOI from search";
+  input.setAttribute("aria-label", `DOI for ${reference.title}`);
+  const useButton = document.createElement("button");
+  useButton.type = "submit";
+  useButton.textContent = "Use DOI";
+  manual.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void runJobAction(useButton, {
+      target: "background",
+      type: "set-paperpile-repair-doi",
+      scanId: renderedScan.id,
+      referenceId: reference.id,
+      doi: input.value,
+    });
+  });
+  manual.append(input, useButton);
+  wrapper.append(manual);
   return wrapper;
 }
 

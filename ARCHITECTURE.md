@@ -22,6 +22,14 @@ to verify every membership, and only then moves the obsolete Website record to
 Paperpile's Trash. A failed create, membership update, or verification leaves
 the Website record untouched.
 
+Website identification first repairs only recognizable repeated/broken URL
+schemes, then checks strong publisher identifiers. Elsevier PII values use
+Crossref's exact `alternative-id` filter and require one unique exact match.
+Standard metadata from the repaired landing page remains the next choice, with
+a conservative title-slug Crossref lookup as a fallback. Unresolved rows can
+open a user-visible Google Scholar query and accept a manually confirmed DOI;
+Sci-Pile does not scrape or automatically trust Scholar results.
+
 ## Scope and boundary
 
 The product goal is a fast fallback when a Paperpile reference has no attached PDF: identify the work, locate a copy the user is authorized to access, and attach or import it into Paperpile with as little friction as possible.

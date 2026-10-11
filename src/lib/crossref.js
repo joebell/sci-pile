@@ -25,34 +25,7 @@ export async function resolveDoiFromBibliographicMetadata(
     "DOI,title,author,issued,score",
   );
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetchImpl(url.href, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-      credentials: "omit",
-      cache: "no-store",
-    });
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      throw new Error("Crossref DOI lookup timed out.");
-    }
-    throw new Error(`Crossref DOI lookup failed: ${errorMessage(error)}`);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Crossref DOI lookup returned HTTP ${response.status}.`);
-  }
-
-  const payload = await response.json();
-  const items = Array.isArray(payload?.message?.items)
-    ? payload.message.items
-    : [];
+  const items = await fetchCrossrefItems(url, { fetchImpl, timeoutMs });
   const scholarYear = Number.isInteger(metadata?.year) ? metadata.year : null;
   const scholarAuthorTokens = authorTokens(metadata?.citation);
 
@@ -82,6 +55,52 @@ export async function resolveDoiFromBibliographicMetadata(
       year: best.year,
       yearCompared: best.yearCompared,
       yearMatched: best.yearMatched,
+    },
+  };
+}
+
+export async function resolveDoiFromAlternativeId(
+  value,
+  {
+    fetchImpl = fetch,
+    timeoutMs = DEFAULT_CROSSREF_TIMEOUT_MS,
+  } = {},
+) {
+  const alternativeId = cleanText(value);
+  if (!/^[A-Z0-9][A-Z0-9._():/-]{5,99}$/i.test(alternativeId)) {
+    throw new Error("This publisher identifier is not safe to query.");
+  }
+
+  const url = new URL(CROSSREF_WORKS_URL);
+  url.searchParams.set("filter", `alternative-id:${alternativeId}`);
+  url.searchParams.set("rows", "5");
+  url.searchParams.set("select", "DOI,title,alternative-id,URL,issued");
+  const items = await fetchCrossrefItems(url, { fetchImpl, timeoutMs });
+  const normalizedId = alternativeId.toLowerCase();
+  const exact = items.filter((item) =>
+    (item?.["alternative-id"] ?? []).some((candidate) =>
+      cleanText(candidate).toLowerCase() === normalizedId
+    )
+  );
+  const byDoi = new Map();
+  for (const item of exact) {
+    const doi = normalizeDoi(item?.DOI);
+    if (doi) {
+      byDoi.set(doi.toLowerCase(), { doi, item });
+    }
+  }
+  if (byDoi.size !== 1) {
+    throw new Error("No unique DOI matched this publisher identifier.");
+  }
+
+  const [{ doi, item }] = byDoi.values();
+  return {
+    doi,
+    title: cleanText(item?.title?.[0]) || null,
+    match: {
+      alternativeId,
+      year: crossrefYear(item),
+      source: "Crossref alternative-id",
     },
   };
 }
@@ -190,6 +209,35 @@ function normalizedText(value) {
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+}
+
+async function fetchCrossrefItems(url, { fetchImpl, timeoutMs }) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(url.href, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Crossref DOI lookup timed out.");
+    }
+    throw new Error(`Crossref DOI lookup failed: ${errorMessage(error)}`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Crossref DOI lookup returned HTTP ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload?.message?.items) ? payload.message.items : [];
 }
 
 function errorMessage(error) {

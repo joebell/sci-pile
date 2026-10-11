@@ -6,7 +6,10 @@ import {
   originPattern,
   originPatternForUrl,
 } from "./lib/core.js";
-import { resolveDoiFromBibliographicMetadata } from "./lib/crossref.js";
+import {
+  resolveDoiFromAlternativeId,
+  resolveDoiFromBibliographicMetadata,
+} from "./lib/crossref.js";
 import {
   isPaperpileBatchInteraction,
   markPaperpileBatchInteractionSkipped,
@@ -26,6 +29,10 @@ import {
   PAPERPILE_PERSONAL_LIBRARY_ID,
 } from "./lib/paperpile.js";
 import { probeDocument } from "./lib/pdf.js";
+import {
+  analyzeWebsiteRepairUrl,
+  googleScholarSearchUrl,
+} from "./lib/website-repair.js";
 
 const PREFIXES_KEY = "prefixes";
 const JOB_PREFIX = "job:";
@@ -96,6 +103,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     operation = handleRetryPaperpileRepairIdentification(message, sender);
   } else if (message.type === "open-paperpile-repair-website") {
     operation = handleOpenPaperpileRepairWebsite(message, sender);
+  } else if (message.type === "open-paperpile-repair-scholar") {
+    operation = handleOpenPaperpileRepairScholar(message, sender);
+  } else if (message.type === "set-paperpile-repair-doi") {
+    operation = handleSetPaperpileRepairDoi(message, sender);
   } else if (message.type === "start-paperpile-repair") {
     operation = handleStartPaperpileRepair(message, sender);
   } else {
@@ -469,6 +480,55 @@ async function handleOpenPaperpileRepairWebsite(message, sender) {
   return { tabId: tab.id ?? null };
 }
 
+async function handleOpenPaperpileRepairScholar(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference) {
+    throw new Error("This Website repair is no longer available.");
+  }
+  const searchUrl = googleScholarSearchUrl(
+    reference.searchQuery ?? analyzeWebsiteRepairUrl(reference.url).searchQuery,
+  );
+  if (!searchUrl) {
+    throw new Error("Sci-Pile could not construct a useful Google Scholar query.");
+  }
+  const tab = await chrome.tabs.create({ url: searchUrl, active: true });
+  return { tabId: tab.id ?? null, url: searchUrl };
+}
+
+async function handleSetPaperpileRepairDoi(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference) {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (["running", "complete"].includes(scan.status)) {
+    throw new Error("The DOI cannot change after the repair queue starts.");
+  }
+  const doi = normalizeDoi(message.doi);
+  if (!doi) {
+    throw new Error("Enter a valid DOI from the search result.");
+  }
+  reference.doi = doi;
+  reference.state = "ready";
+  reference.error = null;
+  reference.permissionOrigin = null;
+  reference.identification = {
+    ...(reference.identification ?? {}),
+    source: "manually confirmed DOI",
+    manuallyConfirmedAt: new Date().toISOString(),
+  };
+  reference.updatedAt = new Date().toISOString();
+  if (!scan.references.some((candidate) => candidate.state === "identifying")) {
+    scan.status = "ready";
+  }
+  scan.updatedAt = reference.updatedAt;
+  await saveScan(scan);
+  return { scanId: scan.id, referenceId: reference.id, doi };
+}
+
 function assertBatchReviewSender(sender) {
   const expectedPrefix = chrome.runtime.getURL("src/batch/batch.html");
   const senderUrl = sender?.url ?? sender?.tab?.url;
@@ -515,6 +575,9 @@ async function identifyPaperpileRepairReferences(scanId, onlyReferenceId = null)
 
       reference.doi = result.doi ?? null;
       reference.resolvedTitle = result.title ?? null;
+      reference.originalUrl = result.originalUrl ?? reference.originalUrl ?? null;
+      reference.url = result.url ?? reference.url;
+      reference.searchQuery = result.searchQuery ?? reference.searchQuery ?? null;
       reference.permissionOrigin = result.permissionOrigin ?? null;
       reference.state = result.doi ? "ready" : "unresolved";
       reference.error = result.doi ? null : result.error;
@@ -540,38 +603,104 @@ async function identifyPaperpileRepairReferences(scanId, onlyReferenceId = null)
 }
 
 async function identifyWebsiteReference(reference) {
-  const directDoi = normalizeDoi(reference.doi) ?? normalizeDoi(reference.url);
+  const urlAnalysis = analyzeWebsiteRepairUrl(reference.url);
+  const resultBase = {
+    originalUrl: urlAnalysis.changed ? urlAnalysis.originalUrl : null,
+    url: urlAnalysis.url ?? reference.url,
+    searchQuery: urlAnalysis.searchQuery,
+  };
+  const recoveryDetails = {
+    originalUrl: urlAnalysis.originalUrl,
+    repairedUrl: urlAnalysis.url,
+    changed: urlAnalysis.changed,
+    repairReason: urlAnalysis.repairReason,
+    alternativeIds: urlAnalysis.alternativeIds,
+    titleHint: urlAnalysis.titleHint,
+  };
+  const directDoi = normalizeDoi(reference.doi) ??
+    normalizeDoi(reference.url) ??
+    normalizeDoi(urlAnalysis.url);
   if (directDoi) {
-    return { doi: directDoi, title: null, details: { source: "stored URL" } };
-  }
-  if (!reference.url) {
-    return { doi: null, error: "This Website record has no usable link." };
+    return {
+      ...resultBase,
+      doi: directDoi,
+      title: null,
+      details: { source: "stored URL", urlRecovery: recoveryDetails },
+    };
   }
 
-  const permissionOrigin = originPatternForUrl(reference.url);
+  const lookupErrors = [];
+  for (const alternativeId of urlAnalysis.alternativeIds) {
+    try {
+      const lookup = await resolveDoiFromAlternativeId(alternativeId);
+      return {
+        ...resultBase,
+        doi: lookup.doi,
+        title: lookup.title,
+        details: {
+          source: "Crossref publisher-identifier match",
+          doiMatch: lookup.match,
+          urlRecovery: recoveryDetails,
+        },
+      };
+    } catch (error) {
+      lookupErrors.push(errorMessage(error));
+    }
+  }
+
+  if (!urlAnalysis.url) {
+    return {
+      ...resultBase,
+      doi: null,
+      error: "This Website record has no recoverable HTTP or HTTPS link.",
+      details: { source: "URL recovery", urlRecovery: recoveryDetails },
+    };
+  }
+
+  const permissionOrigin = originPatternForUrl(urlAnalysis.url);
   if (!await chrome.permissions.contains({ origins: [permissionOrigin] })) {
     return {
+      ...resultBase,
       doi: null,
       permissionOrigin,
-      error: `Site access is required to inspect ${new URL(reference.url).hostname}.`,
+      error: `Site access is required to inspect ${new URL(urlAnalysis.url).hostname}.`,
+      details: { source: "URL recovery", urlRecovery: recoveryDetails },
     };
   }
 
   let result;
   try {
-    result = await probeDocument(reference.url, { credentials: "include" });
+    result = await probeDocument(urlAnalysis.url, { credentials: "include" });
   } catch (error) {
+    const fallback = await identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors);
+    if (fallback) {
+      return {
+        ...resultBase,
+        ...fallback,
+        details: {
+          ...fallback.details,
+          fetchError: errorMessage(error),
+          urlRecovery: recoveryDetails,
+        },
+      };
+    }
     return {
+      ...resultBase,
       doi: null,
-      error: `The Website could not be read: ${errorMessage(error)}`,
-      details: error?.diagnostic ?? null,
+      error: `The repaired Website could not be read: ${errorMessage(error)}`,
+      details: {
+        ...(error?.diagnostic ?? {}),
+        lookupErrors,
+        urlRecovery: recoveryDetails,
+      },
     };
   }
   if (result.kind !== "html") {
     return {
+      ...resultBase,
       doi: null,
       error: "The Website link returned a PDF without enough metadata to identify its reference.",
-      details: result.diagnostic,
+      details: { ...result.diagnostic, urlRecovery: recoveryDetails },
     };
   }
 
@@ -589,7 +718,16 @@ async function identifyWebsiteReference(reference) {
     }
   }
 
+  if (!doi && urlAnalysis.titleHint && urlAnalysis.titleHint !== metadata.title) {
+    const fallback = await identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors);
+    if (fallback) {
+      doi = fallback.doi;
+      doiMatch = fallback.details?.doiMatch ?? doiMatch;
+    }
+  }
+
   return {
+    ...resultBase,
     doi,
     title: metadata.title ?? null,
     error: doi
@@ -601,8 +739,34 @@ async function identifyWebsiteReference(reference) {
       pageTitle: metadata.title ?? null,
       doiMatch,
       response: result.diagnostic?.response ?? null,
+      lookupErrors,
+      urlRecovery: recoveryDetails,
     },
   };
+}
+
+async function identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors) {
+  if (!urlAnalysis.titleHint) {
+    return null;
+  }
+  try {
+    const lookup = await resolveDoiFromBibliographicMetadata({
+      title: urlAnalysis.titleHint,
+      citation: "",
+      year: null,
+    });
+    return {
+      doi: lookup.doi,
+      title: lookup.match?.title ?? urlAnalysis.titleHint,
+      details: {
+        source: "Crossref URL-title match",
+        doiMatch: lookup.match,
+      },
+    };
+  } catch (error) {
+    lookupErrors.push(errorMessage(error));
+    return null;
+  }
 }
 
 async function inspectReferenceHtml(html, baseUrl) {

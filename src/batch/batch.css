@@ -199,6 +199,29 @@ input[type="checkbox"] {
   margin-top: 12px;
 }
 
+.manual-doi {
+  display: inline-flex;
+  flex: 1 1 310px;
+  gap: 8px;
+}
+
+.manual-doi input {
+  min-width: 180px;
+  flex: 1 1 auto;
+  padding: 9px 11px;
+  border: 1px solid #cbd1d8;
+  border-radius: 8px;
+  background: #fff;
+  color: #18202a;
+  font: inherit;
+  font-size: 13px;
+}
+
+.manual-doi input:focus {
+  border-color: #cf2026;
+  outline: 2px solid rgb(207 32 38 / 15%);
+}
+
 .footer-actions {
   display: flex;
   flex-wrap: wrap;

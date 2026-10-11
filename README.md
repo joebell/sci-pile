@@ -12,7 +12,7 @@ sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
 menu also has batch tools for selected references with missing PDFs and for
 repairing records that Paperpile mistakenly imported as Websites.
 
-Sci-Pile is currently version 0.10.0. It:
+Sci-Pile is currently version 0.10.1. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -197,6 +197,21 @@ their saved links, and identifies the linked scholarly work from a DOI declared
 in the URL or standard page metadata. If no DOI is declared, the same
 conservative Crossref title matching used elsewhere can identify it.
 
+Malformed saved links are repaired conservatively before they are opened. For
+example, duplicated scheme text such as `http://httphttps//publisher.example/…`
+is reduced to a valid HTTPS link only when the remaining text begins with a
+plausible hostname. Sci-Pile also extracts strong publisher identifiers from
+URLs. Elsevier PII values are checked against Crossref's exact
+`alternative-id` filter, and the result is accepted only when one unique DOI
+declares that exact identifier. A title-like URL slug can be sent through the
+same conservative title matcher when the repaired page remains unavailable.
+
+If automatic recovery is still inconclusive, the row offers **Search Google
+Scholar** using the best identifier, title hint, or repaired URL available. The
+search is opened for the user rather than scraped automatically. Paste a DOI
+from a confirmed result into **Paste DOI from search** and choose **Use DOI** to
+make that row eligible for repair.
+
 Each checked repair runs as a guarded transaction. Sci-Pile first finds or
 creates a distinct DOI-based reference in the same Paperpile library. It then
 merges every folder and tag from the Website record into that reference and
@@ -290,7 +305,9 @@ restart.
   Website repair additionally reads the selected records' saved URLs, folder
   ids, tag ids, and library id from Paperpile's local JSON export. A linked
   page is sent to Crossref only when its standard metadata lacks a DOI and a
-  conservative title match is needed.
+  conservative title match is needed. Recognized publisher identifiers may be
+  checked against Crossref's exact alternative-id index before the linked page
+  is fetched.
 - By default, persistent host access is requested only for origins represented
   in the saved prefix list or for a redirected source host that the user
   explicitly approves from the status page. Enabling **Automatically follow
