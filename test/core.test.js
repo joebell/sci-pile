@@ -8,6 +8,7 @@ import {
   findFirstDoi,
   hasHtmlSignature,
   hasPdfSignature,
+  httpUrlFromTab,
   normalizeDoi,
   originPattern,
   validatePrefix,
@@ -33,6 +34,15 @@ test("finds the first DOI from the first matching value", () => {
     findFirstDoi("First 10.1111/alpha then 10.2222/beta", "10.3333/gamma"),
     "10.1111/alpha",
   );
+});
+
+test("unwraps HTTP URLs from Chromium's PDF viewer", () => {
+  assert.equal(
+    httpUrlFromTab("chrome-extension://viewer/index.html?file=https%3A%2F%2Fexample.org%2Fpaper.pdf"),
+    "https://example.org/paper.pdf",
+  );
+  assert.equal(httpUrlFromTab("https://example.org/paper.pdf"), "https://example.org/paper.pdf");
+  assert.equal(httpUrlFromTab("blob:https://example.org/id"), null);
 });
 
 test("encodes DOI components while preserving slash separators", () => {

@@ -1,6 +1,7 @@
 import {
   buildCandidateUrl,
   filenameForDoi,
+  httpUrlFromTab,
   normalizeDoi,
   originPattern,
 } from "./lib/core.js";
@@ -643,40 +644,75 @@ async function continueAfterInteraction(job) {
     throw new Error("The source tab was closed. Open it again before continuing.");
   }
 
-  const currentUrl = /^https?:\/\//i.test(tab.url ?? "")
-    ? tab.url
-    : job.interaction.url;
+  const browserTabUrl = tab.url ?? null;
+  const currentUrl = httpUrlFromTab(browserTabUrl) ?? job.interaction.url;
   job.status = "resuming";
   job.interaction.currentUrl = currentUrl;
   job.interaction.error = null;
   await saveJob(job);
 
-  let result;
+  let liveInspection = {
+    pageUrl: browserTabUrl,
+    pageTitle: tab.title ?? null,
+    contentType: null,
+    candidates: [],
+  };
+  let liveInspectionError = null;
+  try {
+    await waitForTabComplete(tabId, 15_000);
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: inspectInteractiveSourcePage,
+    });
+    if (injection?.result && typeof injection.result === "object") {
+      liveInspection = injection.result;
+    }
+  } catch (error) {
+    liveInspectionError = errorMessage(error);
+  }
+
+  let result = null;
+  let probeError = null;
   try {
     result = await probeDocument(currentUrl, { credentials: "include" });
   } catch (error) {
+    probeError = errorMessage(error);
+  }
+
+  const resumeAttempt = {
+    browserTabUrl,
+    requestedUrl: currentUrl,
+    finalUrl: result?.finalUrl ?? null,
+    resultKind: result?.kind ?? null,
+    details: result?.diagnostic ?? null,
+    error: probeError,
+    liveInspection: {
+      pageUrl: liveInspection.pageUrl ?? browserTabUrl,
+      pageTitle: liveInspection.pageTitle ?? tab.title ?? null,
+      contentType: liveInspection.contentType ?? null,
+      candidateCount: Array.isArray(liveInspection.candidates)
+        ? liveInspection.candidates.length
+        : 0,
+      error: liveInspectionError,
+    },
+  };
+  job.interaction.resumeAttempt = resumeAttempt;
+
+  if (!result && !liveInspection.candidates?.length) {
     await setInteractionRequired({
       job,
       url: currentUrl,
       tabId,
       discovery: {
         status: "inspection-failed",
-        error: errorMessage(error),
+        error: probeError ?? liveInspectionError ?? "The displayed source could not be inspected.",
       },
-      error: errorMessage(error),
+      error: probeError ?? liveInspectionError,
     });
     return { status: "interaction-required" };
   }
 
-  const resumeAttempt = {
-    requestedUrl: currentUrl,
-    finalUrl: result.finalUrl,
-    resultKind: result.kind,
-    details: result.diagnostic,
-  };
-  job.interaction.resumeAttempt = resumeAttempt;
-
-  if (result.kind === "pdf") {
+  if (result?.kind === "pdf") {
     const sourceTab = await getJobSourceTab(job, tab);
     await completeResolvedPdf({
       job,
@@ -691,23 +727,28 @@ async function continueAfterInteraction(job) {
   job.status = "discovering";
   await saveJob(job);
 
-  let liveCandidates = [];
-  try {
-    await waitForTabComplete(tabId, 15_000);
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: discoverStandardPdfUrlsFromPage,
-    });
-    liveCandidates = Array.isArray(injection?.result) ? injection.result : [];
-  } catch (error) {
-    resumeAttempt.liveInspectionError = errorMessage(error);
+  const liveCandidates = Array.isArray(liveInspection.candidates)
+    ? liveInspection.candidates
+    : [];
+  let discovery;
+  if (result?.kind === "html") {
+    discovery = await discoverPdfFromLandingHtml(
+      result.html,
+      result.finalUrl,
+      { credentials: "include", extraCandidates: liveCandidates },
+    );
+  } else {
+    discovery = {
+      status: liveCandidates.length ? "checking" : "no-candidates",
+      landingUrl: liveInspection.pageUrl ?? currentUrl,
+      pageTitle: liveInspection.pageTitle ?? tab.title ?? null,
+      candidates: mergePdfCandidates(liveCandidates),
+      attempts: [],
+    };
+    if (discovery.candidates.length) {
+      discovery = await verifyPdfCandidates(discovery, { credentials: "include" });
+    }
   }
-
-  const discovery = await discoverPdfFromLandingHtml(
-    result.html,
-    result.finalUrl,
-    { credentials: "include", extraCandidates: liveCandidates },
-  );
   resumeAttempt.discovery = discovery;
   job.discovery = discovery;
 
@@ -725,7 +766,7 @@ async function continueAfterInteraction(job) {
 
   await setInteractionRequired({
     job,
-    url: result.finalUrl,
+    url: result?.finalUrl ?? currentUrl,
     discovery,
     tabId,
   });
@@ -824,10 +865,11 @@ async function waitForTabComplete(tabId, timeoutMs) {
 }
 
 /**
- * Runs inside the landing page. It uses declared web metadata only and does
- * not inspect frames, embedded objects, scripts, or site-specific markup.
+ * Runs inside a page the user explicitly opened. It uses standard metadata
+ * plus typed or PDF-labelled embeds, objects, and frames. It does not inspect
+ * their contents or use site-specific markup.
  */
-function discoverStandardPdfUrlsFromPage() {
+function inspectInteractiveSourcePage() {
   const results = [];
   const seen = new Set();
 
@@ -869,6 +911,42 @@ function discoverStandardPdfUrlsFromPage() {
     add(anchor.getAttribute("href"), "typed PDF link");
   }
 
+  function looksLikePdfUrl(value) {
+    if (typeof value !== "string") {
+      return false;
+    }
+    try {
+      const url = new URL(value, location.href);
+      return /(?:^|[\/.=_-])pdf(?:$|[?#&/._=-])/i.test(`${url.pathname}${url.search}`);
+    } catch {
+      return false;
+    }
+  }
+
+  for (const embed of document.querySelectorAll("embed[src]")) {
+    const type = (embed.getAttribute("type") ?? "").split(";", 1)[0].trim().toLowerCase();
+    const src = embed.getAttribute("src");
+    if (type === "application/pdf" || looksLikePdfUrl(src)) {
+      add(src, "embedded PDF");
+    }
+  }
+
+  for (const object of document.querySelectorAll("object[data]")) {
+    const type = (object.getAttribute("type") ?? "").split(";", 1)[0].trim().toLowerCase();
+    const data = object.getAttribute("data");
+    if (type === "application/pdf" || looksLikePdfUrl(data)) {
+      add(data, "PDF object");
+    }
+  }
+
+  for (const frame of document.querySelectorAll("iframe[src]")) {
+    const src = frame.getAttribute("src");
+    const description = [frame.id, frame.name, frame.title].filter(Boolean).join(" ");
+    if (/\bpdf\b/i.test(description) || looksLikePdfUrl(src)) {
+      add(src, "PDF iframe");
+    }
+  }
+
   function visitJsonLd(node, depth = 0) {
     if (depth > 12 || node === null || typeof node !== "object") {
       return;
@@ -907,7 +985,12 @@ function discoverStandardPdfUrlsFromPage() {
     }
   }
 
-  return results.slice(0, 20);
+  return {
+    pageUrl: location.href,
+    pageTitle: document.title,
+    contentType: document.contentType,
+    candidates: results.slice(0, 20),
+  };
 }
 
 async function startPdfDownload(url, doi) {

@@ -9,7 +9,7 @@ an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results.
 
-Sci-Pile is currently version 0.8.0. It:
+Sci-Pile is currently version 0.8.1. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -176,14 +176,18 @@ PDF URL without opening the page:
   and a `contentUrl` or `url`.
 
 Every discovered candidate is fetched and checked for a real `%PDF-` signature
-before download. The extension does not inspect iframes, embedded objects, or
-site-specific markup. If no declared candidate verifies, or if the HTML appears
-to require a CAPTCHA, browser-verification step, or login, the status page
-offers **Open source page**. Nothing opens until that button is clicked. After
+before download. The initial background pass does not inspect iframes, embedded
+objects, or site-specific markup. If no declared candidate verifies, or if the
+HTML appears to require a CAPTCHA, browser-verification step, or login, the
+status page offers **Open source page**. Nothing opens until that button is
+clicked. After
 the user completes the interactive step, the extension automatically retries
 discovery when that tab finishes loading, using the browser session from that
-tab. **Continue** remains available as a fallback for pages that update without
-a top-level navigation. The source tab closes after success.
+tab. After an explicit interaction, this retry also recognizes standard
+`<embed type="application/pdf">`, `<object type="application/pdf">`, and
+PDF-labelled iframe declarations in the displayed page, and unwraps Chromium's
+built-in PDF-viewer URL. **Continue** remains available as a fallback for pages
+that update without a top-level navigation. The source tab closes after success.
 Other HTTP errors and successful responses that are neither PDF nor HTML
 continue to the next source.
 

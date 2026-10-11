@@ -60,6 +60,43 @@ export function findFirstDoi(...values) {
   return null;
 }
 
+/**
+ * Return a directly fetchable URL from a browser tab. Chromium's built-in PDF
+ * viewer wraps the original URL in its `file` query parameter.
+ */
+export function httpUrlFromTab(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+
+  if (["https:", "http:"].includes(url.protocol)) {
+    return url.href;
+  }
+
+  for (const parameter of ["file", "url", "src"]) {
+    const wrapped = url.searchParams.get(parameter);
+    if (!wrapped) {
+      continue;
+    }
+    try {
+      const candidate = new URL(wrapped);
+      if (["https:", "http:"].includes(candidate.protocol)) {
+        return candidate.href;
+      }
+    } catch {
+      // Ignore malformed viewer parameters.
+    }
+  }
+  return null;
+}
+
 /** Encode DOI path components without removing the DOI's slash separators. */
 export function encodeDoiForUrl(doi) {
   const normalized = normalizeDoi(doi);
