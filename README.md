@@ -11,7 +11,7 @@ button beside Paperpile on Google Scholar results and a **Find PDF with
 sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
 menu also has a batch scan for selected references with missing PDFs.
 
-Sci-Pile is currently version 0.9.1. It:
+Sci-Pile is currently version 0.9.2. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -176,8 +176,11 @@ the contents of the system clipboard.
 The batch queue processes references one at a time so Paperpile's attachment
 bridge is not asked to run overlapping imports. If a source needs browser
 verification, sign-in, or additional host permission, the queue pauses on that
-row and resumes after the interactive step succeeds. Records that already have
-a PDF are never sent to the resolver by the batch command.
+row and resumes after the interactive step succeeds. If a paper is unavailable,
+choose **Skip paper & continue**; closing its opened source tab has the same
+effect. The row is recorded as unsuccessful and the next queued reference
+starts automatically. Records that already have a PDF are never sent to the
+resolver by the batch command.
 
 The extension then opens or reuses `app.paperpile.com`, activates that tab so a
 cold Paperpile session can finish initializing, and asks Paperpile's own

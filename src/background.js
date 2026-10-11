@@ -8,6 +8,10 @@ import {
 } from "./lib/core.js";
 import { resolveDoiFromBibliographicMetadata } from "./lib/crossref.js";
 import {
+  isPaperpileBatchInteraction,
+  markPaperpileBatchInteractionSkipped,
+} from "./lib/batch.js";
+import {
   buildPaperpileImportPublication,
   buildPaperpileLookupPublication,
   classifyPaperpileAttachment,
@@ -602,7 +606,7 @@ async function syncPaperpileScanFromJob(job, { continueRun = true } = {}) {
     reference.completedAt = reference.updatedAt;
   } else if (job.status === "exhausted") {
     reference.state = "not-found";
-    reference.error = "No configured source returned a verified PDF.";
+    reference.error = job.exhaustedReason ?? "No configured source returned a verified PDF.";
     reference.completedAt = reference.updatedAt;
   } else if (job.status === "interaction-required") {
     reference.state = "attention";
@@ -920,7 +924,35 @@ async function handleStatusAction(message) {
   if (message.type === "continue-interaction") {
     return await resumeInteractionJob(job);
   }
+  if (message.type === "skip-batch-interaction") {
+    return await skipPaperpileBatchInteraction(job);
+  }
   throw new Error("Unknown resolver action.");
+}
+
+async function skipPaperpileBatchInteraction(
+  job,
+  {
+    closeTab = true,
+    reason = "Skipped without a verified PDF so the batch could continue.",
+  } = {},
+) {
+  if (!isPaperpileBatchInteraction(job)) {
+    throw new Error("Only an active Paperpile batch item can be skipped.");
+  }
+
+  const tabId = job.interaction?.tabId;
+  if (Number.isInteger(tabId)) {
+    await unregisterInteractionTab(tabId);
+  }
+  markPaperpileBatchInteractionSkipped(job, reason);
+  await saveJob(job);
+  await syncPaperpileScanFromJob(job);
+
+  if (closeTab && Number.isInteger(tabId)) {
+    await chrome.tabs.remove(tabId).catch(() => null);
+  }
+  return { status: "skipped" };
 }
 
 async function openInteractionPage(job) {
@@ -1240,6 +1272,17 @@ async function clearInteractionTab(tabId) {
   }
 
   const job = await getJob(jobId);
+  if (
+    isPaperpileBatchInteraction(job) &&
+    job.interaction?.tabId === tabId
+  ) {
+    await skipPaperpileBatchInteraction(job, {
+      closeTab: false,
+      reason: "The source page was closed without a verified PDF; the batch continued.",
+    });
+    return;
+  }
+
   if (
     job?.status === "interaction-required" &&
     job.interaction?.tabId === tabId

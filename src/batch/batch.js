@@ -218,7 +218,7 @@ function referenceItem(reference, scan) {
   }
 
   if (reference.state === "attention" && reference.jobId) {
-    details.append(interactionActions(reference.jobId));
+    details.append(interactionActions(reference));
   }
 
   const badge = document.createElement("span");
@@ -228,8 +228,9 @@ function referenceItem(reference, scan) {
   return item;
 }
 
-function interactionActions(jobId) {
+function interactionActions(reference) {
   const wrapper = document.createElement("div");
+  const jobId = reference.jobId;
   wrapper.className = "reference-actions";
   const job = jobs.get(jobId);
 
@@ -252,6 +253,17 @@ function interactionActions(jobId) {
     continueButton.addEventListener("click", () => void continueJob(continueButton, job));
     wrapper.append(continueButton);
   }
+
+  const skipButton = document.createElement("button");
+  skipButton.type = "button";
+  skipButton.textContent = "Skip paper & continue";
+  skipButton.disabled = job?.status === "resuming";
+  skipButton.addEventListener("click", () => void runJobAction(skipButton, {
+    target: "background",
+    type: "skip-batch-interaction",
+    jobId,
+  }));
+  wrapper.append(skipButton);
   return wrapper;
 }
 
@@ -311,7 +323,7 @@ function scanSummary(scan, counts) {
     return `Working through the selected missing PDFs one at a time. ${progressText(counts)}`;
   }
   if (scan.status === "attention-required") {
-    return "A source needs a browser verification, sign-in, or permission step. Complete that row to continue the queue.";
+    return "A source needs attention. Complete that row, or skip the unavailable paper, to continue the queue.";
   }
   if (scan.status === "complete") {
     return `Finished. ${progressText(counts)}`;
