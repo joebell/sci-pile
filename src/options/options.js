@@ -4,12 +4,15 @@ import {
 } from "../lib/core.js";
 
 const PREFIXES_KEY = "prefixes";
+const AUTOMATIC_REDIRECT_ORIGINS = ["https://*/*", "http://*/*"];
 const list = document.querySelector("#prefix-list");
 const emptyState = document.querySelector("#empty-state");
 const template = document.querySelector("#prefix-row-template");
 const addButton = document.querySelector("#add-prefix");
 const saveButton = document.querySelector("#save");
 const status = document.querySelector("#status");
+const automaticRedirects = document.querySelector("#automatic-redirects");
+const redirectStatus = document.querySelector("#redirect-status");
 
 initialize();
 
@@ -19,6 +22,71 @@ async function initialize() {
     addRow(prefix);
   }
   updateRows();
+
+  automaticRedirects.checked = await chrome.permissions.contains({
+    origins: AUTOMATIC_REDIRECT_ORIGINS,
+  });
+}
+
+automaticRedirects.addEventListener("change", () => {
+  automaticRedirects.disabled = true;
+  redirectStatus.textContent = automaticRedirects.checked
+    ? "Waiting for Chrome's permission prompt…"
+    : "Removing all-sites access…";
+
+  if (automaticRedirects.checked) {
+    // Keep this request directly inside the change handler. Chrome requires a
+    // user gesture before it will show the optional all-sites access prompt.
+    chrome.permissions.request(
+      { origins: AUTOMATIC_REDIRECT_ORIGINS },
+      (granted) => {
+        automaticRedirects.disabled = false;
+        if (chrome.runtime.lastError) {
+          automaticRedirects.checked = false;
+          redirectStatus.textContent = chrome.runtime.lastError.message;
+          return;
+        }
+
+        automaticRedirects.checked = granted;
+        redirectStatus.textContent = granted
+          ? "Automatic redirects enabled. Future redirect hosts will not need individual approval."
+          : "All-sites access was not granted. Redirect hosts will continue to require individual approval.";
+      },
+    );
+    return;
+  }
+
+  chrome.permissions.remove(
+    { origins: AUTOMATIC_REDIRECT_ORIGINS },
+    (removed) => {
+      automaticRedirects.disabled = false;
+      if (chrome.runtime.lastError) {
+        automaticRedirects.checked = true;
+        redirectStatus.textContent = chrome.runtime.lastError.message;
+        return;
+      }
+
+      automaticRedirects.checked = !removed;
+      if (removed) {
+        void reportAutomaticRedirectsDisabled();
+      } else {
+        redirectStatus.textContent = "Chrome did not remove all-sites access.";
+      }
+    },
+  );
+});
+
+async function reportAutomaticRedirectsDisabled() {
+  const { prefixes = [] } = await chrome.storage.sync.get(PREFIXES_KEY);
+  const configuredOrigins = [...new Set(prefixes.map(originPattern))];
+  const checks = await Promise.all(configuredOrigins.map((origin) =>
+    chrome.permissions.contains({ origins: [origin] })
+  ));
+  const missingConfiguredAccess = checks.some((granted) => !granted);
+
+  redirectStatus.textContent = missingConfiguredAccess
+    ? "Automatic redirects disabled. Click Save sources once to restore configured-site access."
+    : "Automatic redirects disabled. New redirect hosts will require individual approval.";
 }
 
 addButton.addEventListener("click", () => {

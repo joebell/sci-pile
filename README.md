@@ -9,7 +9,7 @@ an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results.
 
-Sci-Pile is currently version 0.8.2. It:
+Sci-Pile is currently version 0.8.3. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -99,6 +99,12 @@ Query-style prefixes are also supported, for example
 
 Saving the settings asks for access to the configured hosts. Removed hosts have
 their access removed automatically.
+
+Enable **Automatically follow redirects** to approve all HTTP and HTTPS source
+hosts once. Chrome displays an all-sites permission prompt when this setting is
+enabled. Once approved, Sci-Pile can continue from cross-host redirects without
+asking about every new destination. Leave it disabled to retain per-host
+approval.
 
 ## Use
 
@@ -210,9 +216,11 @@ restart.
 - The Google Scholar content script reads result metadata only when rendering
   its local buttons. When a clicked result has no visible DOI, its displayed
   title and citation are sent to Crossref for DOI matching.
-- Persistent host access is requested only for origins represented in the saved
-  prefix list or for a redirected source host that the user explicitly approves
-  from the status page.
+- By default, persistent host access is requested only for origins represented
+  in the saved prefix list or for a redirected source host that the user
+  explicitly approves from the status page. Enabling **Automatically follow
+  redirects** grants Sci-Pile access to all HTTP and HTTPS hosts until that
+  setting is disabled.
 - Chrome's `tabs` permission is used to identify the final URL of the one source
   tab Sci-Pile opened when a challenge or login redirects it to another host.
   Sci-Pile does not enumerate or retain unrelated browsing history.
@@ -259,8 +267,9 @@ For implementation details and the Paperpile integration design, see
   be scanned.
 - Signed-in or challenged sources require the user to open the source page and
   complete the interactive step. The extension then retries automatically;
-  **Continue** is available when a page updates without navigating. A redirect
-  to a new host requires one click to grant access to that exact host. Automatic
-  login or CAPTCHA solving is intentionally not attempted.
+  **Continue** is available when a page updates without navigating. With
+  automatic redirects disabled, a new redirect host requires one click to grant
+  access to that exact host. Automatic login or CAPTCHA solving is intentionally
+  not attempted.
 - Paperpile import currently depends on its Chromium browser extension. A future
   public Paperpile REST API is the preferred cross-browser and iOS integration.

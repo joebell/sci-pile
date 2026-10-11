@@ -56,6 +56,17 @@
           result. A click sends that result's displayed title and citation to
           Crossref only when the result itself does not expose a DOI.
         </p>
+        <div class="permission-setting">
+          <input id="automatic-redirects" type="checkbox">
+          <label for="automatic-redirects">
+            <strong>Automatically follow redirects</strong>
+            <span>
+              Allow Sci-Pile to inspect source tabs after they redirect to any
+              HTTP or HTTPS host. Chrome will ask for all-sites access once.
+            </span>
+          </label>
+        </div>
+        <p id="redirect-status" class="setting-status" role="status" aria-live="polite"></p>
       </section>
 
       <footer>

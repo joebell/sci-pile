@@ -136,7 +136,9 @@ Paperpile reference / article page / pasted DOI
    automatically after its next completed navigation, with a manual retry for
    pages that update in place. It observes the tab's final URL so a cross-host
    redirect can be surfaced to the user; access to the redirected host is
-   requested only from the status page and only after an explicit click.
+   requested only from the status page and only after an explicit click. Users
+   can instead opt into all-sites host access once so subsequent redirect hosts
+   resume automatically.
 6. The local prototype asks Paperpile's own extension to find or create the DOI
    record and run its PDF attachment job. Authentication, duplicate detection,
    file hashing, local IndexedDB writes, upload, and sync remain inside Paperpile.
