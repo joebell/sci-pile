@@ -7,7 +7,8 @@
 Sci-Pile is a Chromium browser extension that finds a paper from its DOI using
 an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
-button beside Paperpile on Google Scholar results.
+button beside Paperpile on Google Scholar results and a **Find PDF with
+sci-pile** command inside Paperpile's own **Add PDF** menu.
 
 Sci-Pile is currently version 0.8.3. It:
 
@@ -20,10 +21,12 @@ Sci-Pile is currently version 0.8.3. It:
 6. Saves a verified PDF to the browser's default Downloads directory without
    opening the PDF viewer.
 7. Uses the installed Paperpile browser extension to find or create the DOI
-   reference, attach the PDF, and focus the Paperpile listing. A successful
-   interactive page is opened only when the user requests it.
+   reference, attach the PDF, and focus the Paperpile listing. A source page is
+   opened only when the user requests it to handle an interactive step.
 8. Adds a **Sci-Pile** action to each Google Scholar result on
    `scholar.google.com`.
+9. Adds **Find PDF with sci-pile** to the **Add PDF** menu for a selected
+   DOI-bearing reference in Paperpile's library.
 
 The extension ships with no source list. Users configure sources they are
 authorized to use. Automatic import requires Paperpile's own browser extension
@@ -56,7 +59,10 @@ as an unpacked extension from this repository.
 5. Select the `sci-pile` directory containing `manifest.json`.
 6. The Sci-Pile settings page opens automatically. Add and save the source
    prefixes you want to use, in priority order.
-7. Optionally pin Sci-Pile from the browser's Extensions menu for quick access.
+7. Optionally enable **Automatically follow redirects** and approve Chrome's
+   one-time all-sites prompt. This avoids separate permission prompts when a
+   configured source redirects to another host.
+8. Optionally pin Sci-Pile from the browser's Extensions menu for quick access.
 
 After pulling an update, return to `chrome://extensions` and click Sci-Pile's
 **Reload** button.
@@ -108,14 +114,20 @@ approval.
 
 ## Use
 
-Open an article page or a Paperpile view containing a DOI and click the
-extension toolbar button. A status tab shows each failed attempt. When a source
-returns bytes containing the `%PDF-` file signature near the start of its
-response, the PDF is saved to the default Downloads directory. The diagnostics
-tab remains available for incomplete or failed runs and closes automatically
-after a confirmed download start and successful Paperpile attachment.
-The filename is derived from the DOI; existing filenames are preserved and the
-browser adds a numeric suffix to the new file.
+Start a lookup in any of three ways:
+
+- Open an article page containing a DOI and click the Sci-Pile toolbar button.
+- Click the **sci-pile** button beneath a Google Scholar result.
+- Select a DOI-bearing Paperpile reference, open **Add PDF**, and choose
+  **Find PDF with sci-pile**.
+
+A status tab shows progress and every failed attempt. When a source returns
+bytes containing the `%PDF-` file signature near the start of its response,
+the PDF is saved to the default Downloads directory and passed to Paperpile.
+The status tab remains available for incomplete or failed runs and closes
+automatically after a confirmed download start and successful Paperpile
+attachment. The filename is derived from the DOI; existing filenames are
+preserved and the browser adds a numeric suffix to the new file.
 
 ### Google Scholar results
 
@@ -134,8 +146,8 @@ is isolated in its own content script and guarded against duplicate insertion.
 
 ### Paperpile library menu
 
-For a selected Paperpile reference that has an identifiable DOI and no main
-PDF, Sci-Pile adds **Find PDF with sci-pile** to Paperpile's **Add PDF** menu.
+For a selected Paperpile reference that has an identifiable DOI, Sci-Pile adds
+**Find PDF with sci-pile** to Paperpile's **Add PDF** menu.
 The option sends that reference's DOI directly into the same resolver, avoiding
 an ambiguous scan of other references visible in the library. The integration
 is feature-detected and silently stays out of the menu if Paperpile changes its
@@ -186,17 +198,18 @@ before download. The initial background pass does not inspect iframes, embedded
 objects, or site-specific markup. If no declared candidate verifies, or if the
 HTML appears to require a CAPTCHA, browser-verification step, or login, the
 status page offers **Open source page**. Nothing opens until that button is
-clicked. After
-the user completes the interactive step, the extension automatically retries
-discovery when that tab finishes loading, using the browser session from that
-tab. After an explicit interaction, this retry also recognizes standard
+clicked. After the user completes the interactive step, the extension
+automatically retries discovery when that tab finishes loading, using the
+browser session from that tab. After an explicit interaction, this retry also
+recognizes standard
 `<embed type="application/pdf">`, `<object type="application/pdf">`, and
 PDF-labelled iframe declarations in the displayed page, and unwraps Chromium's
 built-in PDF-viewer URL. If the source redirects to a different host, Sci-Pile
-shows the redirected host and asks for narrowly scoped access when the user
-chooses **Allow source & continue**. **Continue** remains available as a fallback
-for pages that update without a top-level navigation. The source tab closes
-after success.
+continues automatically when **Automatically follow redirects** is enabled.
+Otherwise, it shows the redirected host and asks for narrowly scoped access
+when the user chooses **Allow source & continue**. **Continue** remains
+available as a fallback for pages that update without a top-level navigation.
+The source tab closes after success.
 Other HTTP errors and successful responses that are neither PDF nor HTML
 continue to the next source.
 
@@ -225,8 +238,8 @@ restart.
   tab Sci-Pile opened when a challenge or login redirects it to another host.
   Sci-Pile does not enumerate or retain unrelated browsing history.
 - Initial PDF and landing-page probes do not send browser credentials or
-  cookies. After the user explicitly opens an interactive page and clicks
-  **Continue**, that retry can use cookies already set for the source.
+  cookies. After the user explicitly opens an interactive source page, the
+  post-interaction retry can use cookies already set for that source.
 - The browser's actual file download follows Chrome's normal download behavior
   and may include cookies already set for the source hostname.
 - PDF responses are streamed only far enough to inspect the first 1,024 bytes.
