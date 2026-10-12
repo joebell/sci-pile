@@ -1,12 +1,17 @@
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.target !== "offscreen" || message.type !== "parse-landing-html") {
+  if (
+    message?.target !== "offscreen" ||
+    !["parse-landing-html", "parse-reference-html"].includes(message.type)
+  ) {
     return false;
   }
 
   try {
     sendResponse({
       ok: true,
-      result: inspectLandingHtml(message.html ?? "", message.baseUrl),
+      result: message.type === "parse-reference-html"
+        ? inspectReferenceHtml(message.html ?? "", message.baseUrl)
+        : inspectLandingHtml(message.html ?? "", message.baseUrl),
     });
   } catch (error) {
     sendResponse({
@@ -16,6 +21,165 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   return false;
 });
+
+function inspectReferenceHtml(html, baseUrl) {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const metadata = new Map();
+  for (const meta of document.querySelectorAll("meta[content]")) {
+    const key = (meta.getAttribute("name") ?? meta.getAttribute("property") ?? "")
+      .trim()
+      .toLowerCase();
+    const value = meta.getAttribute("content")?.trim();
+    if (!key || !value) {
+      continue;
+    }
+    const values = metadata.get(key) ?? [];
+    values.push(value);
+    metadata.set(key, values);
+  }
+
+  const firstMetadata = (...keys) => {
+    for (const key of keys) {
+      const value = metadata.get(key)?.find(Boolean);
+      if (value) {
+        return value;
+      }
+    }
+    return null;
+  };
+  const allMetadata = (...keys) => keys.flatMap((key) => metadata.get(key) ?? []);
+  const doiCandidates = allMetadata(
+    "citation_doi",
+    "dc.identifier",
+    "dc.identifier.doi",
+    "dcterms.identifier",
+    "prism.doi",
+    "eprints.id_number",
+    "article_doi",
+  );
+  const jsonLdMetadata = { dois: [], titles: [], authors: [], containers: [], dates: [] };
+
+  function addJsonLdValue(output, value) {
+    for (const candidate of [value].flat()) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        output.push(candidate.trim());
+      }
+    }
+  }
+
+  function visitJsonLd(node, depth = 0) {
+    if (depth > 12 || node === null || typeof node !== "object") {
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const entry of node) {
+        visitJsonLd(entry, depth + 1);
+      }
+      return;
+    }
+
+    addJsonLdValue(jsonLdMetadata.dois, node.doi);
+    addJsonLdValue(jsonLdMetadata.dois, node.identifier);
+    if (/doi/i.test(String(node.propertyID ?? node.propertyId ?? ""))) {
+      addJsonLdValue(jsonLdMetadata.dois, node.value);
+      addJsonLdValue(jsonLdMetadata.dois, node.name);
+    }
+    addJsonLdValue(jsonLdMetadata.dois, node.sameAs);
+    addJsonLdValue(jsonLdMetadata.dois, node.url);
+    addJsonLdValue(jsonLdMetadata.titles, node.headline);
+    addJsonLdValue(jsonLdMetadata.titles, node.name);
+    addJsonLdValue(jsonLdMetadata.dates, node.datePublished);
+    addJsonLdValue(jsonLdMetadata.dates, node.dateCreated);
+    addJsonLdValue(jsonLdMetadata.containers, node.isPartOf?.name);
+    for (const author of [node.author].flat()) {
+      if (typeof author === "string") {
+        addJsonLdValue(jsonLdMetadata.authors, author);
+      } else if (author && typeof author === "object") {
+        addJsonLdValue(jsonLdMetadata.authors, author.name);
+      }
+    }
+
+    for (const value of Object.values(node)) {
+      visitJsonLd(value, depth + 1);
+    }
+  }
+
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      visitJsonLd(JSON.parse(script.textContent));
+    } catch {
+      // Ignore malformed JSON-LD blocks.
+    }
+  }
+
+  for (const link of document.querySelectorAll('a[href*="doi.org/" i], link[href*="doi.org/" i]')) {
+    doiCandidates.push(link.getAttribute("href"));
+  }
+  doiCandidates.push(...jsonLdMetadata.dois, baseUrl);
+
+  const doi = doiCandidates.map(extractDoi).find(Boolean) ?? null;
+  const title = cleanText(
+    firstMetadata("citation_title", "dc.title", "dcterms.title", "og:title") ??
+    jsonLdMetadata.titles[0] ??
+    document.title,
+    1_000,
+  ) || null;
+  const authors = [
+    ...allMetadata("citation_author", "dc.creator", "dcterms.creator"),
+    ...jsonLdMetadata.authors,
+  ].map((value) => cleanText(value, 300)).filter(Boolean).slice(0, 8);
+  const container = cleanText(
+    firstMetadata("citation_journal_title", "citation_conference_title", "prism.publicationname") ??
+    jsonLdMetadata.containers[0],
+    500,
+  );
+  const date = firstMetadata(
+    "citation_publication_date",
+    "citation_date",
+    "dc.date",
+    "dcterms.issued",
+    "article:published_time",
+  ) ?? jsonLdMetadata.dates[0] ?? "";
+  const yearMatch = String(date).match(/\b(?:19|20)\d{2}\b/);
+
+  return {
+    doi,
+    title,
+    citation: [...new Set([...authors, container].filter(Boolean))].join(" - "),
+    year: yearMatch ? Number(yearMatch[0]) : null,
+  };
+}
+
+function extractDoi(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  let candidate = value.trim();
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch {
+    // The original value may still contain a DOI.
+  }
+  const match = candidate.match(/10\.\d{4,9}\/[-._;()/:A-Z0-9]+/i);
+  if (!match) {
+    return null;
+  }
+  let doi = match[0].replace(/[.,;:!?]+$/, "");
+  while (doi.endsWith(")") && countCharacter(doi, ")") > countCharacter(doi, "(")) {
+    doi = doi.slice(0, -1).replace(/[.,;:!?]+$/, "");
+  }
+  return doi || null;
+}
+
+function countCharacter(value, character) {
+  return [...value].filter((candidate) => candidate === character).length;
+}
+
+function cleanText(value, limit) {
+  return typeof value === "string"
+    ? value.replace(/[\u200b-\u200f\u2060\ufeff]/g, "").replace(/\s+/g, " ").trim().slice(0, limit)
+    : "";
+}
 
 function inspectLandingHtml(html, baseUrl) {
   const document = new DOMParser().parseFromString(html, "text/html");

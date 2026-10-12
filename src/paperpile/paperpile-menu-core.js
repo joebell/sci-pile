@@ -8,6 +8,12 @@
     "Browse for PDF…",
     "Search Google for PDF…",
   ];
+  const REQUIRED_MAIN_MENU_LABELS = [
+    "Auto update",
+    "Find PDFs online",
+    "Make a copy",
+    "Export…",
+  ];
 
   function normalizeLabel(value) {
     return typeof value === "string"
@@ -64,10 +70,165 @@
     return REQUIRED_MENU_LABELS.every((label) => available.has(label));
   }
 
+  function isPaperpileMainMenu(labels) {
+    const available = new Set((labels ?? []).map(normalizeLabel));
+    return REQUIRED_MAIN_MENU_LABELS.every((label) => available.has(label));
+  }
+
+  function cleanReferenceText(value) {
+    return typeof value === "string"
+      ? value.replace(/[\u200b-\u200f\u2060\ufeff]/g, "").trim().replace(/\s+/g, " ")
+      : "";
+  }
+
+  function referenceYear(value) {
+    const match = cleanReferenceText(value).match(/\b(?:19|20)\d{2}\b/);
+    return match ? Number(match[0]) : null;
+  }
+
+  function selectedReferenceCount(value) {
+    const text = typeof value === "string" ? value : "";
+    const match = text.match(/\b([\d,]+)\s+references?\s*[·\u00b7]\s*([\d,]+)\s+selected\b/i) ??
+      text.match(/\b([\d,]+)\s+selected\b/i);
+    if (!match) {
+      return null;
+    }
+    const selected = Number((match[2] ?? match[1]).replace(/,/g, ""));
+    return Number.isSafeInteger(selected) && selected >= 0 ? selected : null;
+  }
+
+  function referenceFromPaperpileExport(reference) {
+    if (!reference || typeof reference !== "object") {
+      return null;
+    }
+
+    const title = cleanReferenceText(reference.title ?? reference._title) ||
+      "[Untitled Paperpile reference]";
+
+    const identifierValues = [];
+    collectStrings(reference.doi, identifierValues);
+    collectStrings(reference.id_list, identifierValues);
+    collectStrings(reference.url, identifierValues);
+
+    const authorList = Array.isArray(reference.author)
+      ? reference.author
+      : Array.isArray(reference.authors)
+        ? reference.authors
+        : [];
+    const authors = authorList
+      .map((author) => {
+        if (typeof author === "string") {
+          return cleanReferenceText(author);
+        }
+        return cleanReferenceText(
+          author?.literal ?? author?.name ??
+          [author?.last ?? author?.family, author?.first ?? author?.given]
+            .filter(Boolean)
+            .join(", "),
+        );
+      })
+      .filter(Boolean)
+      .slice(0, 5)
+      .join(", ");
+    const container = cleanReferenceText(
+      reference.journal ?? reference.publisher ?? reference.container_title ?? reference._journal,
+    );
+    const year = referenceYear([
+      reference.year,
+      reference.published,
+      reference.date,
+      reference._date,
+    ].filter(Boolean).join(" "));
+
+    return {
+      paperpileId: cleanReferenceText(reference._id ?? reference.id),
+      title,
+      citation: [authors, container].filter(Boolean).join(" - "),
+      year,
+      doi: findDoiInValues(identifierValues),
+      hasPdf: hasAttachedPdf(reference),
+      pubtype: cleanReferenceText(reference.pubtype ?? reference.type).toUpperCase(),
+      urls: httpUrlsFromReference(reference),
+      folders: collectionIds([reference.folders, reference.folder_ids].flat()),
+      labels: collectionIds([reference.labels, reference.label_ids, reference.tags].flat()),
+      libraryId: cleanReferenceText(
+        reference.library_id ?? reference.libraryId ?? reference._library_id,
+      ) || "personal",
+    };
+  }
+
+  function httpUrlsFromReference(reference) {
+    const values = [];
+    collectStrings(reference?.url, values);
+    collectStrings(reference?.urls, values);
+    const urls = [];
+    const seen = new Set();
+    for (const value of values) {
+      let candidate = cleanReferenceText(value);
+      if (/^www\./i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      } else if (/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      }
+      try {
+        const url = new URL(candidate);
+        if (["http:", "https:"].includes(url.protocol) && !seen.has(url.href)) {
+          seen.add(url.href);
+          urls.push(url.href);
+        }
+      } catch {
+        // Ignore malformed Website fields; the review page reports no usable URL.
+      }
+    }
+    return urls.slice(0, 20);
+  }
+
+  function collectionIds(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return [...new Set(value.map((entry) => cleanReferenceText(
+      typeof entry === "string" ? entry : entry?._id ?? entry?.id,
+    )).filter(Boolean))];
+  }
+
+  function hasAttachedPdf(reference) {
+    return Array.isArray(reference?.attachments) && reference.attachments.some((attachment) =>
+      attachment && typeof attachment === "object" && Number(attachment.article_pdf) === 1
+    );
+  }
+
+  function collectStrings(value, output, depth = 0) {
+    if (typeof value === "string") {
+      output.push(value);
+      return;
+    }
+    if (!value || depth >= 3) {
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        collectStrings(entry, output, depth + 1);
+      }
+      return;
+    }
+    if (typeof value === "object") {
+      for (const entry of Object.values(value)) {
+        collectStrings(entry, output, depth + 1);
+      }
+    }
+  }
+
   root.SciPilePaperpileMenuCore = Object.freeze({
     findDoiInValues,
+    cleanReferenceText,
+    isPaperpileMainMenu,
     isPaperpilePdfMenu,
+    httpUrlsFromReference,
     normalizeDoi,
     normalizeLabel,
+    referenceFromPaperpileExport,
+    referenceYear,
+    selectedReferenceCount,
   });
 })(globalThis);

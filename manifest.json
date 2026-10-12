@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Sci-Pile",
-  "version": "0.8.3",
+  "version": "0.10.2",
   "description": "Resolve a DOI through user-configured sources, save the PDF, and import it into Paperpile.",
-  "minimum_chrome_version": "109",
+  "minimum_chrome_version": "111",
   "permissions": [
     "activeTab",
     "downloads",
@@ -21,6 +21,12 @@
     "https://api.crossref.org/*"
   ],
   "content_scripts": [
+    {
+      "matches": ["https://app.paperpile.com/my-library/*"],
+      "js": ["src/paperpile/paperpile-export-bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": ["https://scholar.google.com/*"],
       "css": ["src/scholar/scholar.css"],

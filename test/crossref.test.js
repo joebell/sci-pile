@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  resolveDoiFromAlternativeId,
   resolveDoiFromBibliographicMetadata,
   titleSimilarity,
 } from "../src/lib/crossref.js";
@@ -11,6 +12,46 @@ test("scores punctuation and subtitle variations as the same scholarly title", (
     "A practical test: methods and results",
     "A practical test—methods and results",
   ) > 0.95);
+});
+
+test("resolves an exact Crossref publisher alternative id", async () => {
+  let requestedUrl = null;
+  const result = await resolveDoiFromAlternativeId("S0960982222005632", {
+    fetchImpl: async (url) => {
+      requestedUrl = new URL(url);
+      return new Response(JSON.stringify({
+        message: {
+          items: [{
+            DOI: "10.1016/j.cub.2022.03.076",
+            title: ["Running in the wild: Energetics explain ecological running speeds"],
+            "alternative-id": ["S0960982222005632"],
+            issued: { "date-parts": [[2022]] },
+          }],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(requestedUrl.searchParams.get("filter"), "alternative-id:S0960982222005632");
+  assert.equal(result.doi, "10.1016/j.cub.2022.03.076");
+  assert.equal(result.match.source, "Crossref alternative-id");
+});
+
+test("rejects a Crossref alternative-id response without an exact unique id", async () => {
+  await assert.rejects(
+    () => resolveDoiFromAlternativeId("S0960982222005632", {
+      fetchImpl: async () => new Response(JSON.stringify({
+        message: {
+          items: [{
+            DOI: "10.1000/wrong",
+            title: ["Wrong paper"],
+            "alternative-id": ["S0000000000000000"],
+          }],
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    }),
+    /No unique DOI matched/,
+  );
 });
 
 test("resolves a conservative Crossref match by title, author, and year", async () => {

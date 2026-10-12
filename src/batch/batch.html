@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sci-Pile — Paperpile review</title>
+    <link rel="icon" href="../../assets/icons/icon32.png">
+    <link rel="stylesheet" href="batch.css">
+  </head>
+  <body>
+    <main>
+      <header class="page-header">
+        <div class="brand">
+          <img src="../../assets/icons/icon48.png" alt="" width="44" height="44">
+          <div>
+            <p class="eyebrow">Sci-Pile</p>
+            <h1 id="page-title">Missing PDF scan</h1>
+          </div>
+        </div>
+        <p id="summary" class="summary">Reading the selected Paperpile references…</p>
+      </header>
+
+      <section class="toolbar" aria-label="Batch selection controls">
+        <label class="select-all">
+          <input id="select-all" type="checkbox">
+          <span id="select-all-label">Select all missing PDFs</span>
+        </label>
+        <span id="selection-count" class="selection-count"></span>
+      </section>
+
+      <section id="notice" class="notice" hidden></section>
+      <ol id="references" class="references" aria-live="polite"></ol>
+
+      <footer class="footer-actions">
+        <button id="start" type="button" disabled>Download and attach selected PDFs</button>
+        <button id="allow-all-sites" type="button" class="secondary" hidden>Allow all Website access &amp; retry</button>
+        <button id="open-options" type="button" class="secondary">Edit sources</button>
+        <button id="copy-diagnostics" type="button" class="secondary">Copy diagnostics</button>
+      </footer>
+    </main>
+    <script type="module" src="batch.js"></script>
+  </body>
+</html>

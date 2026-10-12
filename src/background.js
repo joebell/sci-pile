@@ -6,22 +6,41 @@ import {
   originPattern,
   originPatternForUrl,
 } from "./lib/core.js";
-import { resolveDoiFromBibliographicMetadata } from "./lib/crossref.js";
+import {
+  resolveDoiFromAlternativeId,
+  resolveDoiFromBibliographicMetadata,
+} from "./lib/crossref.js";
+import {
+  isPaperpileBatchInteraction,
+  markPaperpileBatchInteractionSkipped,
+} from "./lib/batch.js";
 import {
   buildPaperpileImportPublication,
   buildPaperpileLookupPublication,
   classifyPaperpileAttachment,
   choosePaperpileDuplicate,
   getPaperpileAttachmentIds,
+  hasPaperpileCollectionIds,
   hasPaperpileMainPdf,
   isPaperpileLibraryUrl,
   isPaperpileAutoDownloadEnabled,
+  mergePaperpileCollectionIds,
+  paperpileCollectionIds,
   PAPERPILE_PERSONAL_LIBRARY_ID,
 } from "./lib/paperpile.js";
 import { probeDocument } from "./lib/pdf.js";
+import {
+  hasAllHttpHostAccess,
+  hasHttpHostAccess,
+} from "./lib/permissions.js";
+import {
+  analyzeWebsiteRepairUrl,
+  googleScholarSearchUrl,
+} from "./lib/website-repair.js";
 
 const PREFIXES_KEY = "prefixes";
 const JOB_PREFIX = "job:";
+const SCAN_PREFIX = "scan:";
 const PAPERPILE_APP_URL = "https://app.paperpile.com/my-library/all";
 const PAPERPILE_APP_PATTERN = "https://app.paperpile.com/*";
 const PAPERPILE_RPC_TIMEOUT_MS = 7_500;
@@ -34,6 +53,10 @@ const OFFSCREEN_DOCUMENT_PATH = "src/offscreen/offscreen.html";
 const INTERACTION_TAB_PREFIX = "interaction-tab:";
 let creatingOffscreenDocument = null;
 const interactionResumesInFlight = new Set();
+const paperpileScansInFlight = new Set();
+const paperpileDoiScansInFlight = new Set();
+const paperpileRepairsInFlight = new Set();
+const paperpileRepairIdentificationInFlight = new Set();
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   const stored = await chrome.storage.sync.get(PREFIXES_KEY);
@@ -74,6 +97,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     operation = handleScholarResult(message, sender);
   } else if (message.type === "resolve-paperpile-reference") {
     operation = handlePaperpileReference(message, sender);
+  } else if (message.type === "create-paperpile-scan") {
+    operation = handleCreatePaperpileScan(message, sender);
+  } else if (message.type === "start-paperpile-scan") {
+    operation = handleStartPaperpileScan(message, sender);
+  } else if (message.type === "create-paperpile-repair") {
+    operation = handleCreatePaperpileRepair(message, sender);
+  } else if (message.type === "retry-paperpile-repair-identification") {
+    operation = handleRetryPaperpileRepairIdentification(message, sender);
+  } else if (message.type === "retry-paperpile-repair-permissions") {
+    operation = handleRetryPaperpileRepairPermissions(message, sender);
+  } else if (message.type === "open-paperpile-repair-website") {
+    operation = handleOpenPaperpileRepairWebsite(message, sender);
+  } else if (message.type === "open-paperpile-repair-scholar") {
+    operation = handleOpenPaperpileRepairScholar(message, sender);
+  } else if (message.type === "set-paperpile-repair-doi") {
+    operation = handleSetPaperpileRepairDoi(message, sender);
+  } else if (message.type === "start-paperpile-repair") {
+    operation = handleStartPaperpileRepair(message, sender);
   } else {
     operation = handleStatusAction(message);
   }
@@ -88,16 +129,24 @@ async function resolvePdfFromTab(tab) {
   await resolvePdfForDoi(tab, doi);
 }
 
-async function resolvePdfForDoi(tab, doi, input = null) {
+async function resolvePdfForDoi(
+  tab,
+  doi,
+  input = null,
+  { openStatusTab = true, jobId = null } = {},
+) {
   const { prefixes = [] } = await chrome.storage.sync.get(PREFIXES_KEY);
 
   if (!prefixes.length) {
-    await chrome.runtime.openOptionsPage();
-    return;
+    if (openStatusTab) {
+      await chrome.runtime.openOptionsPage();
+      return null;
+    }
+    throw new Error("Configure at least one source prefix before starting Sci-Pile.");
   }
 
   const job = {
-    id: crypto.randomUUID(),
+    id: jobId ?? crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     doi,
     status: doi ? "checking" : "no-doi",
@@ -111,14 +160,16 @@ async function resolvePdfForDoi(tab, doi, input = null) {
   }
 
   await saveJob(job);
-  const statusTab = await chrome.tabs.create({
-    url: chrome.runtime.getURL(`src/status/status.html?job=${job.id}`),
-  });
-  job.statusTabId = Number.isInteger(statusTab.id) ? statusTab.id : null;
-  await saveJob(job);
+  if (openStatusTab) {
+    const statusTab = await chrome.tabs.create({
+      url: chrome.runtime.getURL(`src/status/status.html?job=${job.id}`),
+    });
+    job.statusTabId = Number.isInteger(statusTab.id) ? statusTab.id : null;
+    await saveJob(job);
+  }
 
   if (!doi) {
-    return;
+    return job;
   }
 
   for (const [index, prefix] of prefixes.entries()) {
@@ -183,7 +234,7 @@ async function resolvePdfForDoi(tab, doi, input = null) {
           pdfUrl: result.finalUrl,
           sourceTab: tab,
         });
-        return;
+        return job;
       }
 
       job.status = "discovering";
@@ -206,7 +257,7 @@ async function resolvePdfForDoi(tab, doi, input = null) {
           pdfUrl: discovery.pdf.finalUrl,
           sourceTab: tab,
         });
-        return;
+        return job;
       }
 
       await setInteractionRequired({
@@ -214,7 +265,7 @@ async function resolvePdfForDoi(tab, doi, input = null) {
         url: result.finalUrl,
         discovery,
       });
-      return;
+      return job;
     } catch (error) {
       job.attempts.push({
         prefix,
@@ -238,6 +289,8 @@ async function resolvePdfForDoi(tab, doi, input = null) {
   delete job.currentUrl;
   delete job.currentDetails;
   await saveJob(job);
+  await syncPaperpileScanFromJob(job);
+  return job;
 }
 
 async function handleScholarResult(message, sender) {
@@ -283,6 +336,1083 @@ async function handlePaperpileReference(message, sender) {
   });
 
   return { doi };
+}
+
+async function handleCreatePaperpileScan(message, sender) {
+  const senderTab = sender?.tab;
+  if (!Number.isInteger(senderTab?.id) || !isPaperpileLibraryUrl(senderTab.url)) {
+    throw new Error("Sci-Pile accepts library-scan requests only from Paperpile.");
+  }
+
+  const references = sanitizePaperpileReferences(message.references);
+  const selectionCount = Number.isSafeInteger(Number(message.selectionCount))
+    ? Math.max(Number(message.selectionCount), references.length)
+    : references.length;
+  if (!selectionCount) {
+    throw new Error("Select one or more Paperpile references before starting a scan.");
+  }
+  const missingReferences = references.filter((reference) => !reference.hasPdf);
+
+  const scan = {
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    sourceTabId: senderTab.id,
+    status: "identifying",
+    total: missingReferences.length,
+    totalSelected: selectionCount,
+    excludedAttached: references.length - missingReferences.length,
+    references: missingReferences.map((reference, index) => ({
+      ...reference,
+      id: `reference-${index + 1}`,
+      missingPdf: true,
+      state: reference.doi ? "ready" : "identifying",
+      doiMatch: null,
+      error: null,
+      jobId: null,
+    })),
+  };
+
+  await saveScan(scan);
+  const reviewTab = await chrome.tabs.create({
+    url: chrome.runtime.getURL(`src/batch/batch.html?scan=${scan.id}`),
+  });
+  scan.reviewTabId = Number.isInteger(reviewTab.id) ? reviewTab.id : null;
+  await saveScan(scan);
+
+  void resolvePaperpileScanDois(scan.id).catch(async (error) => {
+    const latest = await getScan(scan.id);
+    if (!latest) {
+      return;
+    }
+    latest.status = "ready";
+    latest.error = errorMessage(error);
+    latest.updatedAt = new Date().toISOString();
+    await saveScan(latest);
+  });
+
+  return { scanId: scan.id, count: scan.total, totalSelected: scan.totalSelected };
+}
+
+async function handleCreatePaperpileRepair(message, sender) {
+  const senderTab = sender?.tab;
+  if (!Number.isInteger(senderTab?.id) || !isPaperpileLibraryUrl(senderTab.url)) {
+    throw new Error("Sci-Pile accepts Website-repair requests only from Paperpile.");
+  }
+
+  const references = sanitizePaperpileReferences(message.references);
+  const selectionCount = Number.isSafeInteger(Number(message.selectionCount))
+    ? Math.max(Number(message.selectionCount), references.length)
+    : references.length;
+  if (!selectionCount) {
+    throw new Error("Select one or more Paperpile references before starting a repair.");
+  }
+
+  const websites = references.filter((reference) => reference.pubtype === "PP_WEBSITE");
+  const scan = {
+    id: crypto.randomUUID(),
+    kind: "website-repair",
+    createdAt: new Date().toISOString(),
+    sourceTabId: senderTab.id,
+    status: "identifying",
+    total: websites.length,
+    totalSelected: selectionCount,
+    excludedNonWebsite: references.length - websites.length,
+    references: websites.map((reference, index) => {
+      const url = reference.urls[0] ?? null;
+      const doi = normalizeDoi(reference.doi) ?? normalizeDoi(url);
+      return {
+        ...reference,
+        id: `reference-${index + 1}`,
+        url,
+        doi,
+        resolvedTitle: null,
+        state: doi ? "ready" : url ? "identifying" : "unresolved",
+        error: url ? null : "This Website record has no usable HTTP or HTTPS link.",
+        permissionOrigin: null,
+        replacement: null,
+      };
+    }),
+  };
+
+  await saveScan(scan);
+  const reviewTab = await chrome.tabs.create({
+    url: chrome.runtime.getURL(`src/batch/batch.html?scan=${scan.id}`),
+  });
+  scan.reviewTabId = Number.isInteger(reviewTab.id) ? reviewTab.id : null;
+  await saveScan(scan);
+
+  void identifyPaperpileRepairReferences(scan.id).catch(async (error) => {
+    const latest = await getScan(scan.id);
+    if (!latest) {
+      return;
+    }
+    latest.status = "ready";
+    latest.error = errorMessage(error);
+    latest.updatedAt = new Date().toISOString();
+    await saveScan(latest);
+  });
+
+  return { scanId: scan.id, count: scan.total, totalSelected: scan.totalSelected };
+}
+
+async function handleRetryPaperpileRepairIdentification(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference) {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (["running", "complete"].includes(scan.status)) {
+    throw new Error("Website identification cannot change after the repair queue starts.");
+  }
+  reference.state = "identifying";
+  reference.error = null;
+  reference.permissionOrigin = null;
+  scan.status = "identifying";
+  scan.updatedAt = new Date().toISOString();
+  await saveScan(scan);
+  await identifyPaperpileRepairReferences(scan.id, reference.id);
+  return { scanId: scan.id, referenceId: reference.id };
+}
+
+async function handleRetryPaperpileRepairPermissions(message, sender) {
+  assertBatchReviewSender(sender);
+  if (!await hasAllHttpHostAccess()) {
+    throw new Error("Chrome has not granted Sci-Pile access to all Website hosts.");
+  }
+
+  const scan = await getScan(message.scanId);
+  if (!scan || scan.kind !== "website-repair") {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (["running", "complete"].includes(scan.status)) {
+    throw new Error("Website identification cannot change after the repair queue starts.");
+  }
+
+  const blocked = scan.references.filter((reference) =>
+    reference.state === "unresolved" && reference.permissionOrigin
+  );
+  if (!blocked.length) {
+    return { scanId: scan.id, retried: 0 };
+  }
+
+  for (const reference of blocked) {
+    reference.state = "identifying";
+    reference.error = null;
+    reference.permissionOrigin = null;
+  }
+  scan.status = "identifying";
+  scan.updatedAt = new Date().toISOString();
+  await saveScan(scan);
+  await identifyPaperpileRepairReferences(scan.id);
+  return { scanId: scan.id, retried: blocked.length };
+}
+
+async function handleOpenPaperpileRepairWebsite(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference?.url) {
+    throw new Error("This Website link is no longer available.");
+  }
+  const tab = await chrome.tabs.create({ url: reference.url, active: true });
+  return { tabId: tab.id ?? null };
+}
+
+async function handleOpenPaperpileRepairScholar(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference) {
+    throw new Error("This Website repair is no longer available.");
+  }
+  const searchUrl = googleScholarSearchUrl(
+    reference.searchQuery ?? analyzeWebsiteRepairUrl(reference.url).searchQuery,
+  );
+  if (!searchUrl) {
+    throw new Error("Sci-Pile could not construct a useful Google Scholar query.");
+  }
+  const tab = await chrome.tabs.create({ url: searchUrl, active: true });
+  return { tabId: tab.id ?? null, url: searchUrl };
+}
+
+async function handleSetPaperpileRepairDoi(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === message.referenceId);
+  if (!scan || scan.kind !== "website-repair" || !reference) {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (["running", "complete"].includes(scan.status)) {
+    throw new Error("The DOI cannot change after the repair queue starts.");
+  }
+  const doi = normalizeDoi(message.doi);
+  if (!doi) {
+    throw new Error("Enter a valid DOI from the search result.");
+  }
+  reference.doi = doi;
+  reference.state = "ready";
+  reference.error = null;
+  reference.permissionOrigin = null;
+  reference.identification = {
+    ...(reference.identification ?? {}),
+    source: "manually confirmed DOI",
+    manuallyConfirmedAt: new Date().toISOString(),
+  };
+  reference.updatedAt = new Date().toISOString();
+  if (!scan.references.some((candidate) => candidate.state === "identifying")) {
+    scan.status = "ready";
+  }
+  scan.updatedAt = reference.updatedAt;
+  await saveScan(scan);
+  return { scanId: scan.id, referenceId: reference.id, doi };
+}
+
+function assertBatchReviewSender(sender) {
+  const expectedPrefix = chrome.runtime.getURL("src/batch/batch.html");
+  const senderUrl = sender?.url ?? sender?.tab?.url;
+  if (!senderUrl?.startsWith(expectedPrefix)) {
+    throw new Error("Sci-Pile accepts this action only from its review page.");
+  }
+}
+
+async function identifyPaperpileRepairReferences(scanId, onlyReferenceId = null) {
+  const inFlightKey = onlyReferenceId ? `${scanId}:${onlyReferenceId}` : scanId;
+  if (paperpileRepairIdentificationInFlight.has(inFlightKey)) {
+    return;
+  }
+  paperpileRepairIdentificationInFlight.add(inFlightKey);
+
+  try {
+    let scan = await getScan(scanId);
+    if (!scan || scan.kind !== "website-repair") {
+      return;
+    }
+    const pending = scan.references.filter((reference) =>
+      reference.state === "identifying" &&
+      (!onlyReferenceId || reference.id === onlyReferenceId)
+    );
+
+    for (const original of pending) {
+      let result;
+      try {
+        result = await identifyWebsiteReference(original);
+      } catch (error) {
+        result = {
+          doi: null,
+          error: `The Website could not be identified: ${errorMessage(error)}`,
+        };
+      }
+      scan = await getScan(scanId);
+      if (!scan || scan.kind !== "website-repair") {
+        return;
+      }
+      const reference = scan.references.find((candidate) => candidate.id === original.id);
+      if (!reference || reference.state !== "identifying") {
+        continue;
+      }
+
+      reference.doi = result.doi ?? null;
+      reference.resolvedTitle = result.title ?? null;
+      reference.originalUrl = result.originalUrl ?? reference.originalUrl ?? null;
+      reference.url = result.url ?? reference.url;
+      reference.searchQuery = result.searchQuery ?? reference.searchQuery ?? null;
+      reference.permissionOrigin = result.permissionOrigin ?? null;
+      reference.state = result.doi ? "ready" : "unresolved";
+      reference.error = result.doi ? null : result.error;
+      reference.identification = result.details ?? null;
+      reference.updatedAt = new Date().toISOString();
+      scan.updatedAt = reference.updatedAt;
+      await saveScan(scan);
+    }
+
+    scan = await getScan(scanId);
+    if (!scan || scan.kind !== "website-repair") {
+      return;
+    }
+    if (!scan.references.some((reference) => reference.state === "identifying")) {
+      scan.status = "ready";
+      scan.identificationCompletedAt = new Date().toISOString();
+      scan.updatedAt = scan.identificationCompletedAt;
+      await saveScan(scan);
+    }
+  } finally {
+    paperpileRepairIdentificationInFlight.delete(inFlightKey);
+  }
+}
+
+async function identifyWebsiteReference(reference) {
+  const urlAnalysis = analyzeWebsiteRepairUrl(reference.url);
+  const resultBase = {
+    originalUrl: urlAnalysis.changed ? urlAnalysis.originalUrl : null,
+    url: urlAnalysis.url ?? reference.url,
+    searchQuery: urlAnalysis.searchQuery,
+  };
+  const recoveryDetails = {
+    originalUrl: urlAnalysis.originalUrl,
+    repairedUrl: urlAnalysis.url,
+    changed: urlAnalysis.changed,
+    repairReason: urlAnalysis.repairReason,
+    alternativeIds: urlAnalysis.alternativeIds,
+    titleHint: urlAnalysis.titleHint,
+  };
+  const directDoi = normalizeDoi(reference.doi) ??
+    normalizeDoi(reference.url) ??
+    normalizeDoi(urlAnalysis.url);
+  if (directDoi) {
+    return {
+      ...resultBase,
+      doi: directDoi,
+      title: null,
+      details: { source: "stored URL", urlRecovery: recoveryDetails },
+    };
+  }
+
+  const lookupErrors = [];
+  for (const alternativeId of urlAnalysis.alternativeIds) {
+    try {
+      const lookup = await resolveDoiFromAlternativeId(alternativeId);
+      return {
+        ...resultBase,
+        doi: lookup.doi,
+        title: lookup.title,
+        details: {
+          source: "Crossref publisher-identifier match",
+          doiMatch: lookup.match,
+          urlRecovery: recoveryDetails,
+        },
+      };
+    } catch (error) {
+      lookupErrors.push(errorMessage(error));
+    }
+  }
+
+  if (!urlAnalysis.url) {
+    return {
+      ...resultBase,
+      doi: null,
+      error: "This Website record has no recoverable HTTP or HTTPS link.",
+      details: { source: "URL recovery", urlRecovery: recoveryDetails },
+    };
+  }
+
+  const permissionOrigin = originPatternForUrl(urlAnalysis.url);
+  if (!await hasHttpHostAccess(permissionOrigin)) {
+    return {
+      ...resultBase,
+      doi: null,
+      permissionOrigin,
+      error: `Site access is required to inspect ${new URL(urlAnalysis.url).hostname}.`,
+      details: { source: "URL recovery", urlRecovery: recoveryDetails },
+    };
+  }
+
+  let result;
+  try {
+    result = await probeDocument(urlAnalysis.url, { credentials: "include" });
+  } catch (error) {
+    const fallback = await identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors);
+    if (fallback) {
+      return {
+        ...resultBase,
+        ...fallback,
+        details: {
+          ...fallback.details,
+          fetchError: errorMessage(error),
+          urlRecovery: recoveryDetails,
+        },
+      };
+    }
+    return {
+      ...resultBase,
+      doi: null,
+      error: `The repaired Website could not be read: ${errorMessage(error)}`,
+      details: {
+        ...(error?.diagnostic ?? {}),
+        lookupErrors,
+        urlRecovery: recoveryDetails,
+      },
+    };
+  }
+  if (result.kind !== "html") {
+    return {
+      ...resultBase,
+      doi: null,
+      error: "The Website link returned a PDF without enough metadata to identify its reference.",
+      details: { ...result.diagnostic, urlRecovery: recoveryDetails },
+    };
+  }
+
+  const metadata = await inspectReferenceHtml(result.html, result.finalUrl);
+  let doi = normalizeDoi(metadata.doi) ?? normalizeDoi(result.finalUrl);
+  let doiMatch = null;
+  let lookupError = null;
+  if (!doi && metadata.title) {
+    try {
+      const lookup = await resolveDoiFromBibliographicMetadata(metadata);
+      doi = lookup.doi;
+      doiMatch = lookup.match ?? null;
+    } catch (error) {
+      lookupError = errorMessage(error);
+    }
+  }
+
+  if (!doi && urlAnalysis.titleHint && urlAnalysis.titleHint !== metadata.title) {
+    const fallback = await identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors);
+    if (fallback) {
+      doi = fallback.doi;
+      doiMatch = fallback.details?.doiMatch ?? doiMatch;
+    }
+  }
+
+  return {
+    ...resultBase,
+    doi,
+    title: metadata.title ?? null,
+    error: doi
+      ? null
+      : lookupError ?? "No DOI was declared by the linked page.",
+    details: {
+      source: "linked Website",
+      finalUrl: result.finalUrl,
+      pageTitle: metadata.title ?? null,
+      doiMatch,
+      response: result.diagnostic?.response ?? null,
+      lookupErrors,
+      urlRecovery: recoveryDetails,
+    },
+  };
+}
+
+async function identifyWebsiteFromTitleHint(urlAnalysis, lookupErrors) {
+  if (!urlAnalysis.titleHint) {
+    return null;
+  }
+  try {
+    const lookup = await resolveDoiFromBibliographicMetadata({
+      title: urlAnalysis.titleHint,
+      citation: "",
+      year: null,
+    });
+    return {
+      doi: lookup.doi,
+      title: lookup.match?.title ?? urlAnalysis.titleHint,
+      details: {
+        source: "Crossref URL-title match",
+        doiMatch: lookup.match,
+      },
+    };
+  } catch (error) {
+    lookupErrors.push(errorMessage(error));
+    return null;
+  }
+}
+
+async function inspectReferenceHtml(html, baseUrl) {
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    target: "offscreen",
+    type: "parse-reference-html",
+    html,
+    baseUrl,
+  });
+  if (!response?.ok) {
+    throw new Error(response?.error ?? "The background reference parser did not respond.");
+  }
+  return response.result;
+}
+
+async function handleStartPaperpileScan(message, sender) {
+  const expectedPrefix = chrome.runtime.getURL("src/batch/batch.html");
+  const senderUrl = sender?.url ?? sender?.tab?.url;
+  if (!senderUrl?.startsWith(expectedPrefix)) {
+    throw new Error("Sci-Pile accepts batch actions only from its review page.");
+  }
+
+  const scan = await getScan(message.scanId);
+  if (!scan) {
+    throw new Error("This Paperpile scan is no longer available.");
+  }
+  if (scan.status === "identifying") {
+    throw new Error("Wait for DOI identification to finish before starting.");
+  }
+  if (["running", "attention-required"].includes(scan.status)) {
+    throw new Error("This Paperpile scan is already in progress.");
+  }
+
+  const { prefixes = [] } = await chrome.storage.sync.get(PREFIXES_KEY);
+  if (!prefixes.length) {
+    throw new Error("Configure at least one source prefix before starting Sci-Pile.");
+  }
+
+  const selectedIds = new Set(
+    Array.isArray(message.referenceIds)
+      ? message.referenceIds.filter((value) => typeof value === "string")
+      : [],
+  );
+  const selected = scan.references.filter(
+    (reference) => reference.state === "ready" && selectedIds.has(reference.id),
+  );
+  if (!selected.length) {
+    throw new Error("Select at least one missing-PDF reference with an identified DOI.");
+  }
+
+  for (const reference of scan.references) {
+    if (reference.state !== "ready") {
+      continue;
+    }
+    reference.state = selectedIds.has(reference.id) ? "queued" : "skipped";
+  }
+  scan.status = "running";
+  scan.startedAt = new Date().toISOString();
+  scan.updatedAt = scan.startedAt;
+  scan.error = null;
+  await saveScan(scan);
+
+  void runPaperpileScan(scan.id).catch(async (error) => {
+    const latest = await getScan(scan.id);
+    if (!latest) {
+      return;
+    }
+    latest.status = "failed";
+    latest.error = errorMessage(error);
+    latest.updatedAt = new Date().toISOString();
+    await saveScan(latest);
+  });
+
+  return { scanId: scan.id, selected: selected.length };
+}
+
+async function handleStartPaperpileRepair(message, sender) {
+  assertBatchReviewSender(sender);
+  const scan = await getScan(message.scanId);
+  if (!scan || scan.kind !== "website-repair") {
+    throw new Error("This Website repair is no longer available.");
+  }
+  if (scan.status === "identifying") {
+    throw new Error("Wait for Website identification to finish before starting.");
+  }
+  if (scan.status === "running") {
+    throw new Error("This Website repair is already in progress.");
+  }
+
+  const selectedIds = new Set(
+    Array.isArray(message.referenceIds)
+      ? message.referenceIds.filter((value) => typeof value === "string")
+      : [],
+  );
+  const selected = scan.references.filter(
+    (reference) => reference.state === "ready" && selectedIds.has(reference.id),
+  );
+  if (!selected.length) {
+    throw new Error("Select at least one Website reference with an identified DOI.");
+  }
+
+  for (const reference of scan.references) {
+    if (reference.state !== "ready") {
+      continue;
+    }
+    reference.state = selectedIds.has(reference.id) ? "queued" : "skipped";
+  }
+  scan.status = "running";
+  scan.startedAt = new Date().toISOString();
+  scan.updatedAt = scan.startedAt;
+  scan.error = null;
+  await saveScan(scan);
+
+  void runPaperpileRepair(scan.id).catch(async (error) => {
+    const latest = await getScan(scan.id);
+    if (!latest) {
+      return;
+    }
+    latest.status = "failed";
+    latest.error = errorMessage(error);
+    latest.updatedAt = new Date().toISOString();
+    await saveScan(latest);
+  });
+
+  return { scanId: scan.id, selected: selected.length };
+}
+
+function sanitizePaperpileReferences(references) {
+  if (!Array.isArray(references)) {
+    return [];
+  }
+
+  const clean = (value, limit) => typeof value === "string"
+    ? value.replace(/[\u200b-\u200f\u2060\ufeff]/g, "").trim().replace(/\s+/g, " ").slice(0, limit)
+    : "";
+  const cleanList = (value, limit = 500) => Array.isArray(value)
+    ? [...new Set(value.map((entry) => clean(entry, limit)).filter(Boolean))]
+    : [];
+  return references.slice(0, 5_000).map((reference) => {
+    const year = Number(reference?.year);
+    return {
+      title: clean(reference?.title, 1_000),
+      citation: clean(reference?.citation, 2_000),
+      year: Number.isInteger(year) && year >= 1000 && year <= 3000 ? year : null,
+      doi: normalizeDoi(reference?.doi),
+      hasPdf: reference?.hasPdf === true,
+      paperpileId: clean(reference?.paperpileId, 200),
+      pubtype: clean(reference?.pubtype, 100).toUpperCase(),
+      urls: cleanList(reference?.urls, 4_000).filter(isHttpUrl).slice(0, 20),
+      folders: cleanList(reference?.folders, 200),
+      labels: cleanList(reference?.labels, 200),
+      libraryId: clean(reference?.libraryId, 200) || PAPERPILE_PERSONAL_LIBRARY_ID,
+    };
+  }).filter((reference) => reference.title);
+}
+
+function isHttpUrl(value) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePaperpileScanDois(scanId) {
+  if (paperpileDoiScansInFlight.has(scanId)) {
+    return;
+  }
+  paperpileDoiScansInFlight.add(scanId);
+
+  try {
+    let scan = await getScan(scanId);
+    if (!scan) {
+      return;
+    }
+
+    for (const original of scan.references) {
+      if (original.state !== "identifying") {
+        continue;
+      }
+
+      let doiLookup;
+      try {
+        doiLookup = await resolveDoiFromBibliographicMetadata(original);
+      } catch (error) {
+        doiLookup = { error: errorMessage(error) };
+      }
+
+      scan = await getScan(scanId);
+      if (!scan || scan.status !== "identifying") {
+        return;
+      }
+      const reference = scan.references.find((candidate) => candidate.id === original.id);
+      if (!reference) {
+        continue;
+      }
+
+      if (doiLookup.doi) {
+        reference.doi = doiLookup.doi;
+        reference.doiMatch = doiLookup.match ?? null;
+        reference.state = "ready";
+        reference.error = null;
+      } else {
+        reference.state = "unresolved";
+        reference.error = doiLookup.error ?? "No unambiguous DOI match was found.";
+      }
+      scan.updatedAt = new Date().toISOString();
+      await saveScan(scan);
+    }
+
+    scan = await getScan(scanId);
+    if (!scan || scan.status !== "identifying") {
+      return;
+    }
+    scan.status = "ready";
+    scan.identificationCompletedAt = new Date().toISOString();
+    scan.updatedAt = scan.identificationCompletedAt;
+    await saveScan(scan);
+  } finally {
+    paperpileDoiScansInFlight.delete(scanId);
+  }
+}
+
+async function runPaperpileScan(scanId) {
+  if (paperpileScansInFlight.has(scanId)) {
+    return;
+  }
+  paperpileScansInFlight.add(scanId);
+
+  try {
+    while (true) {
+      const scan = await getScan(scanId);
+      if (!scan) {
+        return;
+      }
+      if (scan.references.some((reference) => reference.state === "attention")) {
+        scan.status = "attention-required";
+        scan.updatedAt = new Date().toISOString();
+        await saveScan(scan);
+        return;
+      }
+
+      const reference = scan.references.find((candidate) => candidate.state === "queued");
+      if (!reference) {
+        scan.status = "complete";
+        scan.activeReferenceId = null;
+        scan.completedAt = new Date().toISOString();
+        scan.updatedAt = scan.completedAt;
+        await saveScan(scan);
+        return;
+      }
+
+      reference.state = "running";
+      reference.jobId = crypto.randomUUID();
+      reference.startedAt = new Date().toISOString();
+      reference.error = null;
+      scan.status = "running";
+      scan.activeReferenceId = reference.id;
+      scan.updatedAt = reference.startedAt;
+      await saveScan(scan);
+
+      const sourceTab = Number.isInteger(scan.sourceTabId)
+        ? await chrome.tabs.get(scan.sourceTabId).catch(() => null)
+        : null;
+      let job;
+      try {
+        job = await resolvePdfForDoi(
+          sourceTab,
+          reference.doi,
+          {
+            source: "paperpile-batch-scan",
+            scanId,
+            referenceId: reference.id,
+          },
+          { openStatusTab: false, jobId: reference.jobId },
+        );
+      } catch (error) {
+        const latest = await getScan(scanId);
+        const current = latest?.references.find((candidate) => candidate.id === reference.id);
+        if (latest && current) {
+          current.state = "failed";
+          current.error = errorMessage(error);
+          current.completedAt = new Date().toISOString();
+          latest.updatedAt = current.completedAt;
+          await saveScan(latest);
+        }
+        continue;
+      }
+
+      await syncPaperpileScanFromJob(job, { continueRun: false });
+      if (job.status === "interaction-required") {
+        return;
+      }
+    }
+  } finally {
+    paperpileScansInFlight.delete(scanId);
+  }
+}
+
+async function runPaperpileRepair(scanId) {
+  if (paperpileRepairsInFlight.has(scanId)) {
+    return;
+  }
+  paperpileRepairsInFlight.add(scanId);
+
+  try {
+    let lastReplacement = null;
+    while (true) {
+      const scan = await getScan(scanId);
+      if (!scan || scan.kind !== "website-repair") {
+        return;
+      }
+      const reference = scan.references.find((candidate) => candidate.state === "queued");
+      if (!reference) {
+        scan.status = "complete";
+        scan.activeReferenceId = null;
+        scan.completedAt = new Date().toISOString();
+        scan.updatedAt = scan.completedAt;
+        await saveScan(scan);
+        if (lastReplacement) {
+          await showPaperpileRepairResult(lastReplacement).catch(() => null);
+        }
+        return;
+      }
+
+      reference.state = "repairing";
+      reference.startedAt = new Date().toISOString();
+      reference.error = null;
+      scan.status = "running";
+      scan.activeReferenceId = reference.id;
+      scan.updatedAt = reference.startedAt;
+      await saveScan(scan);
+
+      try {
+        const result = await repairPaperpileWebsiteReference(reference, scan.sourceTabId);
+        const latest = await getScan(scanId);
+        const current = latest?.references.find((candidate) => candidate.id === reference.id);
+        if (!latest || !current) {
+          return;
+        }
+        current.state = "repaired";
+        current.replacement = result;
+        current.completedAt = new Date().toISOString();
+        current.updatedAt = current.completedAt;
+        latest.updatedAt = current.completedAt;
+        latest.activeReferenceId = null;
+        await saveScan(latest);
+        lastReplacement = result;
+      } catch (error) {
+        const latest = await getScan(scanId);
+        const current = latest?.references.find((candidate) => candidate.id === reference.id);
+        if (!latest || !current) {
+          return;
+        }
+        current.state = "failed";
+        current.error = errorMessage(error);
+        current.completedAt = new Date().toISOString();
+        current.updatedAt = current.completedAt;
+        latest.updatedAt = current.completedAt;
+        latest.activeReferenceId = null;
+        await saveScan(latest);
+      }
+    }
+  } finally {
+    paperpileRepairsInFlight.delete(scanId);
+  }
+}
+
+async function repairPaperpileWebsiteReference(reference, sourceTabId) {
+  if (!reference.paperpileId || !reference.doi) {
+    throw new Error("The Website record is missing its Paperpile id or resolved DOI.");
+  }
+
+  const paperpileTab = await getOrCreatePaperpileTab();
+  const extensionVersion = await waitForPaperpileBridge(paperpileTab.id);
+  const user = await executePaperpileRpc(paperpileTab.id, "utils.getUserFromDb", {});
+  if (!user?._id) {
+    throw new Error("Paperpile is not signed in or its local library is not ready.");
+  }
+
+  const sourceLibraryId = reference.libraryId || PAPERPILE_PERSONAL_LIBRARY_ID;
+  const original = await getPaperpilePublication(
+    paperpileTab.id,
+    reference.paperpileId,
+    sourceLibraryId,
+  );
+  if (!original) {
+    throw new Error("The original Website reference no longer exists in Paperpile.");
+  }
+  if (original.pubtype !== "PP_WEBSITE") {
+    throw new Error("The original reference is no longer a Website, so it was left untouched.");
+  }
+  if (Number(original.trashed) === 1) {
+    throw new Error("The original Website reference is already in Paperpile's Trash.");
+  }
+
+  const lookupPublication = buildPaperpileLookupPublication(reference.doi);
+  let duplicate = await findPaperpileDuplicate(
+    paperpileTab.id,
+    lookupPublication,
+    original._id,
+    sourceLibraryId,
+  );
+  let recordAction = "existing";
+  let automaticPdfLookupSuppressed = false;
+  let automaticPdfLookupSuppressionError = null;
+
+  if (!duplicate || duplicate.publication_id === original._id || duplicate.pub?._id === original._id) {
+    recordAction = "created";
+    const sourceTab = Number.isInteger(sourceTabId)
+      ? await chrome.tabs.get(sourceTabId).catch(() => null)
+      : null;
+    const callbackTab = await preparePaperpileCallbackTab({ paperpileTab, sourceTab });
+    try {
+      const importResult = await createPaperpileReference({
+        paperpileTab,
+        callbackTab,
+        importPublication: buildPaperpileImportPublication(reference.doi, crypto.randomUUID()),
+        lookupPublication,
+        user,
+        excludePublicationId: original._id,
+        libraryId: sourceLibraryId,
+        requireLibraryMatch: true,
+      });
+      automaticPdfLookupSuppressed = importResult.automaticPdfLookupSuppressed;
+      automaticPdfLookupSuppressionError = importResult.automaticPdfLookupSuppressionError;
+      duplicate = importResult.duplicate;
+    } finally {
+      if (callbackTab.temporary && Number.isInteger(callbackTab.id)) {
+        await chrome.tabs.remove(callbackTab.id).catch(() => null);
+      }
+    }
+  }
+
+  const replacementId = duplicate?.pub?._id ?? duplicate?.publication_id;
+  const replacementLibraryId = duplicate?.library_id || sourceLibraryId;
+  if (!replacementId || replacementId === original._id) {
+    throw new Error("Paperpile did not create or find a distinct replacement reference.");
+  }
+
+  let replacement = await getPaperpilePublication(
+    paperpileTab.id,
+    replacementId,
+    replacementLibraryId,
+  );
+  if (!replacement) {
+    throw new Error("The replacement reference could not be verified in Paperpile.");
+  }
+  if (replacement.pubtype === "PP_WEBSITE") {
+    throw new Error(
+      "Paperpile matched another Website record instead of a scholarly reference; " +
+      "the original Website record was left untouched.",
+    );
+  }
+
+  const originalFolders = mergePaperpileCollectionIds(
+    original.folders,
+    original.folder_ids,
+    reference.folders,
+  );
+  const originalLabels = mergePaperpileCollectionIds(
+    original.labels,
+    original.label_ids,
+    original.tags,
+    reference.labels,
+  );
+  const mergedFolders = mergePaperpileCollectionIds(replacement.folders, originalFolders);
+  const mergedLabels = mergePaperpileCollectionIds(replacement.labels, originalLabels);
+  if (
+    originalFolders.length ||
+    originalLabels.length ||
+    Number(replacement.trashed) === 1
+  ) {
+    const updated = await executePaperpileRpc(
+      paperpileTab.id,
+      "data-layer.updatePublication",
+      {
+        id: replacementId,
+        data: { folders: mergedFolders, labels: mergedLabels, trashed: 0 },
+        libraryId: replacementLibraryId,
+      },
+    );
+    if (!updated) {
+      throw new Error("Paperpile did not accept the replacement's folder and label update.");
+    }
+    replacement = await getPaperpilePublication(
+      paperpileTab.id,
+      replacementId,
+      replacementLibraryId,
+    );
+    if (
+      !replacement ||
+      Number(replacement.trashed) === 1 ||
+      !hasPaperpileCollectionIds(replacement.folders, originalFolders) ||
+      !hasPaperpileCollectionIds(replacement.labels, originalLabels)
+    ) {
+      throw new Error(
+        "The replacement's folders and labels could not be verified; the Website record was left untouched.",
+      );
+    }
+  }
+
+  const trashed = await executePaperpileRpc(
+    paperpileTab.id,
+    "data-layer.updatePublication",
+    {
+      id: original._id,
+      data: { trashed: 1 },
+      libraryId: sourceLibraryId,
+    },
+  );
+  if (!trashed) {
+    throw new Error("Paperpile did not accept the request to move the Website record to Trash.");
+  }
+  const verifiedOriginal = await getPaperpilePublication(
+    paperpileTab.id,
+    original._id,
+    sourceLibraryId,
+  );
+  if (Number(verifiedOriginal?.trashed) !== 1) {
+    throw new Error("The replacement exists, but moving the Website record to Trash could not be verified.");
+  }
+
+  return {
+    status: "success",
+    recordAction,
+    publicationId: replacementId,
+    libraryId: replacementLibraryId,
+    originalPublicationId: original._id,
+    transferredFolders: paperpileCollectionIds(originalFolders),
+    transferredLabels: paperpileCollectionIds(originalLabels),
+    automaticPdfLookupSuppressed,
+    automaticPdfLookupSuppressionError,
+    extensionVersion,
+  };
+}
+
+async function getPaperpilePublication(tabId, id, libraryId) {
+  return await executePaperpileRpc(tabId, "api-backend.getPub", {
+    id,
+    libraryId,
+    syncFirst: false,
+  });
+}
+
+async function showPaperpileRepairResult(result) {
+  const paperpileTab = await getOrCreatePaperpileTab();
+  await executePaperpileRpc(paperpileTab.id, "utils.openPubInWebapp", {
+    pub: { _id: result.publicationId },
+    libraryId: result.libraryId,
+  });
+  await focusPaperpileTab(paperpileTab);
+}
+
+async function syncPaperpileScanFromJob(job, { continueRun = true } = {}) {
+  const input = job?.input;
+  if (input?.source !== "paperpile-batch-scan" || !input.scanId || !input.referenceId) {
+    return;
+  }
+
+  const scan = await getScan(input.scanId);
+  const reference = scan?.references.find((candidate) => candidate.id === input.referenceId);
+  if (!scan || !reference) {
+    return;
+  }
+
+  reference.jobId = job.id;
+  reference.updatedAt = new Date().toISOString();
+  if (job.status === "success") {
+    reference.state = job.paperpile?.status === "failed"
+      ? "failed"
+      : job.paperpile?.status === "queued"
+        ? "paperpile-queued"
+        : "attached";
+    reference.error = job.paperpile?.status === "failed" ? job.paperpile.error : null;
+    reference.paperpile = job.paperpile ?? null;
+    reference.download = job.download ?? null;
+    reference.completedAt = reference.updatedAt;
+  } else if (job.status === "exhausted") {
+    reference.state = "not-found";
+    reference.error = job.exhaustedReason ?? "No configured source returned a verified PDF.";
+    reference.completedAt = reference.updatedAt;
+  } else if (job.status === "interaction-required") {
+    reference.state = "attention";
+    reference.error = job.interaction?.reason ?? "The source page needs attention.";
+    scan.status = "attention-required";
+  } else {
+    reference.state = "running";
+  }
+
+  scan.activeReferenceId = ["running", "attention"].includes(reference.state)
+    ? reference.id
+    : null;
+  scan.updatedAt = reference.updatedAt;
+  await saveScan(scan);
+
+  if (
+    continueRun &&
+    ["attached", "paperpile-queued", "failed", "not-found"].includes(reference.state)
+  ) {
+    queueMicrotask(() => {
+      void runPaperpileScan(scan.id).catch((error) => {
+        console.error("Sci-Pile batch scan could not continue", error);
+      });
+    });
+  }
 }
 
 function sanitizeScholarResult(result) {
@@ -358,6 +1488,7 @@ async function completeResolvedPdf({
   job.paperpile = paperpile;
   job.status = "success";
   await saveJob(job);
+  await syncPaperpileScanFromJob(job);
 
   if (Number.isInteger(closeTabId)) {
     await unregisterInteractionTab(closeTabId);
@@ -559,6 +1690,7 @@ async function setInteractionRequired({ job, url, discovery, tabId = null, error
     permissionOrigin,
   };
   await saveJob(job);
+  await syncPaperpileScanFromJob(job);
 }
 
 async function handleStatusAction(message) {
@@ -573,7 +1705,35 @@ async function handleStatusAction(message) {
   if (message.type === "continue-interaction") {
     return await resumeInteractionJob(job);
   }
+  if (message.type === "skip-batch-interaction") {
+    return await skipPaperpileBatchInteraction(job);
+  }
   throw new Error("Unknown resolver action.");
+}
+
+async function skipPaperpileBatchInteraction(
+  job,
+  {
+    closeTab = true,
+    reason = "Skipped without a verified PDF so the batch could continue.",
+  } = {},
+) {
+  if (!isPaperpileBatchInteraction(job)) {
+    throw new Error("Only an active Paperpile batch item can be skipped.");
+  }
+
+  const tabId = job.interaction?.tabId;
+  if (Number.isInteger(tabId)) {
+    await unregisterInteractionTab(tabId);
+  }
+  markPaperpileBatchInteractionSkipped(job, reason);
+  await saveJob(job);
+  await syncPaperpileScanFromJob(job);
+
+  if (closeTab && Number.isInteger(tabId)) {
+    await chrome.tabs.remove(tabId).catch(() => null);
+  }
+  return { status: "skipped" };
 }
 
 async function openInteractionPage(job) {
@@ -893,6 +2053,17 @@ async function clearInteractionTab(tabId) {
   }
 
   const job = await getJob(jobId);
+  if (
+    isPaperpileBatchInteraction(job) &&
+    job.interaction?.tabId === tabId
+  ) {
+    await skipPaperpileBatchInteraction(job, {
+      closeTab: false,
+      reason: "The source page was closed without a verified PDF; the batch continued.",
+    });
+    return;
+  }
+
   if (
     job?.status === "interaction-required" &&
     job.interaction?.tabId === tabId
@@ -1312,6 +2483,9 @@ async function createPaperpileReference({
   importPublication,
   lookupPublication,
   user,
+  excludePublicationId = null,
+  libraryId = PAPERPILE_PERSONAL_LIBRARY_ID,
+  requireLibraryMatch = false,
 }) {
   const shouldSuppressAutomaticPdf = isPaperpileAutoDownloadEnabled(user);
   const originalAutoDownloadValue = user.autoDownloadPDFs;
@@ -1338,13 +2512,15 @@ async function createPaperpileReference({
       tabId: callbackTab.id,
       collections: [],
       source: "context",
-      libraryId: PAPERPILE_PERSONAL_LIBRARY_ID,
+      libraryId,
     });
 
     const duplicate = await waitForPaperpileDuplicate(
       paperpileTab.id,
       lookupPublication,
       PAPERPILE_IMPORT_TIMEOUT_MS,
+      excludePublicationId,
+      requireLibraryMatch ? libraryId : null,
     );
     return {
       duplicate,
@@ -1389,17 +2565,42 @@ async function waitForPaperpileBridge(tabId) {
   );
 }
 
-async function findPaperpileDuplicate(tabId, lookupPublication) {
+async function findPaperpileDuplicate(
+  tabId,
+  lookupPublication,
+  excludePublicationId = null,
+  requiredLibraryId = null,
+) {
   const result = await executePaperpileRpc(tabId, "remote.isExistingPub", {
     pub: lookupPublication,
   });
-  return choosePaperpileDuplicate(result?.duplicates);
+  const duplicates = Array.isArray(result?.duplicates)
+    ? result.duplicates.filter((entry) =>
+      (entry?.pub?._id ?? entry?.publication_id) !== excludePublicationId &&
+      (
+        !requiredLibraryId ||
+        (entry?.library_id || PAPERPILE_PERSONAL_LIBRARY_ID) === requiredLibraryId
+      )
+    )
+    : [];
+  return choosePaperpileDuplicate(duplicates);
 }
 
-async function waitForPaperpileDuplicate(tabId, lookupPublication, timeoutMs) {
+async function waitForPaperpileDuplicate(
+  tabId,
+  lookupPublication,
+  timeoutMs,
+  excludePublicationId = null,
+  requiredLibraryId = null,
+) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const duplicate = await findPaperpileDuplicate(tabId, lookupPublication);
+    const duplicate = await findPaperpileDuplicate(
+      tabId,
+      lookupPublication,
+      excludePublicationId,
+      requiredLibraryId,
+    );
     if (duplicate) {
       return duplicate;
     }
@@ -1733,6 +2934,19 @@ async function getJob(jobId) {
   }
   const local = await chrome.storage.local.get("lastJob");
   return local.lastJob?.id === jobId ? local.lastJob : null;
+}
+
+async function saveScan(scan) {
+  await chrome.storage.session.set({ [`${SCAN_PREFIX}${scan.id}`]: scan });
+}
+
+async function getScan(scanId) {
+  if (typeof scanId !== "string" || !scanId) {
+    return null;
+  }
+  const key = `${SCAN_PREFIX}${scanId}`;
+  const stored = await chrome.storage.session.get(key);
+  return stored[key] ?? null;
 }
 
 function errorMessage(error) {

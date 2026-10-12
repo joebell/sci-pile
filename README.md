@@ -8,9 +8,11 @@ Sci-Pile is a Chromium browser extension that finds a paper from its DOI using
 an ordered list of user-configured sources, downloads the verified PDF, and
 attaches it to the matching Paperpile record. It also adds a compact `sci-pile`
 button beside Paperpile on Google Scholar results and a **Find PDF with
-sci-pile** command inside Paperpile's own **Add PDF** menu.
+sci-pile** command inside Paperpile's own **Add PDF** menu. Its Paperpile main
+menu also has batch tools for selected references with missing PDFs and for
+repairing records that Paperpile mistakenly imported as Websites.
 
-Sci-Pile is currently version 0.8.3. It:
+Sci-Pile is currently version 0.10.2. It:
 
 1. Finds the first DOI in the visible text of the current page.
 2. Falls back to DOI metadata and the page URL when no visible DOI is found.
@@ -27,6 +29,12 @@ Sci-Pile is currently version 0.8.3. It:
    `scholar.google.com`.
 9. Adds **Find PDF with sci-pile** to the **Add PDF** menu for a selected
    DOI-bearing reference in Paperpile's library.
+10. Adds **Scan with sci-pile for missing PDFs…** to Paperpile's main menu,
+    with a review page for selecting and processing missing-PDF references.
+11. Adds **Repair Website references with sci-pile…** to the same menu. It
+    follows each selected Website link, identifies the paper, finds or creates
+    the proper Paperpile reference, preserves folders and tags, and moves the
+    obsolete Website record to Paperpile's Trash only after verification.
 
 The extension ships with no source list. Users configure sources they are
 authorized to use. Automatic import requires Paperpile's own browser extension
@@ -34,7 +42,7 @@ and a signed-in Paperpile web app.
 
 ## Requirements
 
-- Chrome or another Chromium browser that supports Manifest V3 (Chrome 109 or
+- Chrome or another Chromium browser that supports Manifest V3 (Chrome 111 or
   newer).
 - One or more DOI-based PDF or landing-page sources that you are authorized to
   access.
@@ -59,9 +67,10 @@ as an unpacked extension from this repository.
 5. Select the `sci-pile` directory containing `manifest.json`.
 6. The Sci-Pile settings page opens automatically. Add and save the source
    prefixes you want to use, in priority order.
-7. Optionally enable **Automatically follow redirects** and approve Chrome's
+7. Optionally enable **Automatically access source sites** and approve Chrome's
    one-time all-sites prompt. This avoids separate permission prompts when a
-   configured source redirects to another host.
+   Website reference is inspected or a configured source redirects to another
+   host.
 8. Optionally pin Sci-Pile from the browser's Extensions menu for quick access.
 
 After pulling an update, return to `chrome://extensions` and click Sci-Pile's
@@ -106,22 +115,29 @@ Query-style prefixes are also supported, for example
 Saving the settings asks for access to the configured hosts. Removed hosts have
 their access removed automatically.
 
-Enable **Automatically follow redirects** to approve all HTTP and HTTPS source
+Enable **Automatically access source sites** to approve all HTTP and HTTPS
 hosts once. Chrome displays an all-sites permission prompt when this setting is
-enabled. Once approved, Sci-Pile can continue from cross-host redirects without
-asking about every new destination. Leave it disabled to retain per-host
-approval.
+enabled. Once approved, Sci-Pile can inspect linked Website records and continue
+from cross-host redirects without asking about every new destination. The
+Website-repair review page offers the same one-time permission when it first
+encounters a blocked site, then retries every blocked reference together. Leave
+it disabled to retain per-host approval.
 
 ## Use
 
-Start a lookup in any of three ways:
+Start a lookup or library repair in any of five ways:
 
 - Open an article page containing a DOI and click the Sci-Pile toolbar button.
 - Click the **sci-pile** button beneath a Google Scholar result.
 - Select a DOI-bearing Paperpile reference, open **Add PDF**, and choose
   **Find PDF with sci-pile**.
+- Select one or more Paperpile references, open its main menu, and choose
+  **Scan with sci-pile for missing PDFs…**.
+- Select one or more Paperpile Website records, open the main menu, and choose
+  **Repair Website references with sci-pile…**.
 
-A status tab shows progress and every failed attempt. When a source returns
+For a single-paper lookup, a status tab shows progress and every failed attempt.
+When a source returns
 bytes containing the `%PDF-` file signature near the start of its response,
 the PDF is saved to the default Downloads directory and passed to Paperpile.
 The status tab remains available for incomplete or failed runs and closes
@@ -152,6 +168,69 @@ The option sends that reference's DOI directly into the same resolver, avoiding
 an ambiguous scan of other references visible in the library. The integration
 is feature-detected and silently stays out of the menu if Paperpile changes its
 undocumented page structure; the toolbar action remains available as a fallback.
+
+For batch work, select one or more references and choose **Scan with sci-pile
+for missing PDFs…** from Paperpile's main reference-actions menu. Sci-Pile opens
+its own review tab and lists only selected references that do not already have
+a PDF. Missing-PDF records with an identified DOI are checked by default; they
+can be selected individually or with **Select all missing PDFs** before
+starting.
+
+Paperpile virtualizes long library lists, so only a small portion may exist in
+the visible page at once. When the selection is larger than those visible rows,
+Sci-Pile asks Paperpile for its complete selected-reference export. This allows
+**Select all** to cover the whole filtered library rather than only the first
+screen of results. The export is captured inside the page and does not replace
+the contents of the system clipboard.
+
+The batch queue processes references one at a time so Paperpile's attachment
+bridge is not asked to run overlapping imports. If a source needs browser
+verification, sign-in, or additional host permission, the queue pauses on that
+row and resumes after the interactive step succeeds. If a paper is unavailable,
+choose **Skip paper & continue**; closing its opened source tab has the same
+effect. The row is recorded as unsuccessful and the next queued reference
+starts automatically. Records that already have a PDF are never sent to the
+resolver by the batch command.
+
+To repair references that were accidentally imported as Websites, select the
+records and choose **Repair Website references with sci-pile…**. Sci-Pile uses
+Paperpile's complete selected-reference export, so this also works for long,
+virtualized selections. The review page lists only Website records, follows
+their saved links, and identifies the linked scholarly work from a DOI declared
+in the URL or standard page metadata. If no DOI is declared, the same
+conservative Crossref title matching used elsewhere can identify it.
+
+If a linked site has not yet been authorized, the review page offers **Allow
+all Website access & retry**. Approve Chrome's prompt once to let Sci-Pile
+inspect HTTP and HTTPS links automatically; every permission-blocked row in the
+current batch is then retried together, and later repair batches reuse the same
+permission. The individual per-site approval buttons remain available for
+users who prefer narrowly scoped access.
+
+Malformed saved links are repaired conservatively before they are opened. For
+example, duplicated scheme text such as `http://httphttps//publisher.example/…`
+is reduced to a valid HTTPS link only when the remaining text begins with a
+plausible hostname. Sci-Pile also extracts strong publisher identifiers from
+URLs. Elsevier PII values are checked against Crossref's exact
+`alternative-id` filter, and the result is accepted only when one unique DOI
+declares that exact identifier. A title-like URL slug can be sent through the
+same conservative title matcher when the repaired page remains unavailable.
+
+If automatic recovery is still inconclusive, the row offers **Search Google
+Scholar** using the best identifier, title hint, or repaired URL available. The
+search is opened for the user rather than scraped automatically. Paste a DOI
+from a confirmed result into **Paste DOI from search** and choose **Use DOI** to
+make that row eligible for repair.
+
+Each checked repair runs as a guarded transaction. Sci-Pile first finds or
+creates a distinct DOI-based reference in the same Paperpile library. It then
+merges every folder and tag from the Website record into that reference and
+reads the replacement back from Paperpile to verify those memberships. Only
+after the replacement and all memberships are confirmed does it move the old
+Website record to Paperpile's Trash. If the target reference already exists,
+the folders and tags are merged into it rather than overwritten. Any failure
+leaves the original Website record untouched; Trash remains recoverable through
+Paperpile.
 
 The extension then opens or reuses `app.paperpile.com`, activates that tab so a
 cold Paperpile session can finish initializing, and asks Paperpile's own
@@ -205,7 +284,7 @@ recognizes standard
 `<embed type="application/pdf">`, `<object type="application/pdf">`, and
 PDF-labelled iframe declarations in the displayed page, and unwraps Chromium's
 built-in PDF-viewer URL. If the source redirects to a different host, Sci-Pile
-continues automatically when **Automatically follow redirects** is enabled.
+continues automatically when **Automatically access source sites** is enabled.
 Otherwise, it shows the redirected host and asks for narrowly scoped access
 when the user chooses **Allow source & continue**. **Continue** remains
 available as a fallback for pages that update without a top-level navigation.
@@ -229,11 +308,21 @@ restart.
 - The Google Scholar content script reads result metadata only when rendering
   its local buttons. When a clicked result has no visible DOI, its displayed
   title and citation are sent to Crossref for DOI matching.
+- The Paperpile content script reads only selected references after a batch
+  command is chosen. PDF presence is checked locally. For a missing-PDF
+  row whose DOI is not exposed in the page, its displayed title, author,
+  journal, and year are sent to Crossref for conservative DOI matching.
+  Website repair additionally reads the selected records' saved URLs, folder
+  ids, tag ids, and library id from Paperpile's local JSON export. A linked
+  page is sent to Crossref only when its standard metadata lacks a DOI and a
+  conservative title match is needed. Recognized publisher identifiers may be
+  checked against Crossref's exact alternative-id index before the linked page
+  is fetched.
 - By default, persistent host access is requested only for origins represented
   in the saved prefix list or for a redirected source host that the user
-  explicitly approves from the status page. Enabling **Automatically follow
-  redirects** grants Sci-Pile access to all HTTP and HTTPS hosts until that
-  setting is disabled.
+  explicitly approves from the status or repair-review page. Enabling
+  **Automatically access source sites** grants Sci-Pile access to all HTTP and
+  HTTPS hosts until that setting is disabled.
 - Chrome's `tabs` permission is used to identify the final URL of the one source
   tab Sci-Pile opened when a challenge or login redirects it to another host.
   Sci-Pile does not enumerate or retain unrelated browsing history.
@@ -249,7 +338,8 @@ restart.
   The Paperpile user object needed by its PDF crawler is passed back to that
   extension in memory and excluded from diagnostics.
 - Prefixes are synchronized through `chrome.storage.sync`. Lookup status lives
-  only in `chrome.storage.session`.
+  only in `chrome.storage.session`; batch review state uses the same
+  session-scoped storage.
 
 ## Paperpile compatibility
 
@@ -286,3 +376,9 @@ For implementation details and the Paperpile integration design, see
   not attempted.
 - Paperpile import currently depends on its Chromium browser extension. A future
   public Paperpile REST API is the preferred cross-browser and iOS integration.
+- The Paperpile menu integrations depend on Paperpile's undocumented DOM. They
+  are feature-detected and may temporarily disappear if Paperpile changes its
+  menus or reference-row markup.
+- Website repair depends on standard DOI/citation metadata in the linked page.
+  JavaScript-only pages or links requiring authentication may need to be opened
+  manually before identification can be retried.

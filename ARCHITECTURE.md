@@ -1,11 +1,34 @@
 # Sci-Pile — Architecture Plan
 
-Status: local Chromium prototype implemented, 2026-10-08
+Status: local Chromium prototype implemented, updated 2026-10-11
 
 The desktop prototype also includes a narrowly scoped Google Scholar content
 script. It adds a per-result Sci-Pile action, extracts an exposed DOI when
 available, and otherwise performs a conservative Crossref bibliographic match
 before entering the normal resolver pipeline.
+
+Paperpile's main reference-actions menu also exposes a batch scan. The content
+script snapshots the selected rows, marks records that already expose a PDF,
+and opens an extension-owned review page. Missing-PDF rows without a DOI in the
+DOM use the same conservative Crossref matcher before they become selectable.
+The background worker then resolves and attaches the checked rows sequentially.
+
+The same main-menu integration also exposes **Repair Website references with
+sci-pile…**. It exports the complete selection, keeps only `PP_WEBSITE` records,
+identifies the scholarly work behind each saved URL, and processes checked rows
+sequentially. A repair creates or finds a distinct DOI record in the same
+library, unions the original folder and label ids into it, reads the target back
+to verify every membership, and only then moves the obsolete Website record to
+Paperpile's Trash. A failed create, membership update, or verification leaves
+the Website record untouched.
+
+Website identification first repairs only recognizable repeated/broken URL
+schemes, then checks strong publisher identifiers. Elsevier PII values use
+Crossref's exact `alternative-id` filter and require one unique exact match.
+Standard metadata from the repaired landing page remains the next choice, with
+a conservative title-slug Crossref lookup as a fallback. Unresolved rows can
+open a user-visible Google Scholar query and accept a manually confirmed DOI;
+Sci-Pile does not scrape or automatically trust Scholar results.
 
 ## Scope and boundary
 
@@ -61,6 +84,9 @@ same local models and job queue as Paperpile itself:
   download override.
 - `utils.addPdfCrawlJob` downloads and attaches a supplied local PDF candidate.
 - `utils.openPubInWebapp` focuses the resulting reference in the library.
+- `api-backend.getPub` reads the authoritative local publication before and
+  after a Website repair, while `data-layer.updatePublication` performs synced
+  folder/label merging and the final recoverable move to Trash.
 
 The 1.5.1188 content-script relay uses the `new-` action prefix and preserves
 `idType: "request"` when returning a background response to the web app. Bridge
@@ -136,9 +162,11 @@ Paperpile reference / article page / pasted DOI
    automatically after its next completed navigation, with a manual retry for
    pages that update in place. It observes the tab's final URL so a cross-host
    redirect can be surfaced to the user; access to the redirected host is
-   requested only from the status page and only after an explicit click. Users
-   can instead opt into all-sites host access once so subsequent redirect hosts
-   resume automatically.
+   requested only from an extension page and only after an explicit click.
+   Users can instead opt into all-sites host access once so subsequent redirect
+   hosts and linked Website records are inspected automatically. The Website
+   repair review offers this as one bulk permission and retries every blocked
+   record after it is granted.
 6. The local prototype asks Paperpile's own extension to find or create the DOI
    record and run its PDF attachment job. Authentication, duplicate detection,
    file hashing, local IndexedDB writes, upload, and sync remain inside Paperpile.
@@ -157,10 +185,17 @@ available, the internal bridge should be replaced by supported OAuth endpoints.
 - **Popup/side panel:** current work, ranked locations, provenance, and actions.
 - **Paperpile content script:** captures the selected reference's visible DOI
   when its `Add PDF` control is activated and inserts an optional
-  `Find PDF with sci-pile` item into the resulting menu. DOM integration is a
-  feature-detected enhancement, not the only input path.
+  `Find PDF with sci-pile` item into the resulting menu. It also feature-detects
+  the main reference-actions menu, snapshots selected rows and their local PDF
+  state, and inserts `Scan with sci-pile for missing PDFs…` and `Repair Website
+  references with sci-pile…`.
+- **Batch review page:** lists selected records and their PDF/DOI or Website
+  repair state, supports individual and select-all controls, and surfaces
+  per-record interaction steps without opening a status tab for every queued
+  DOI.
 - **Background service worker:** resolver orchestration, caching, timeouts,
-  redirects, permission requests, downloads, and interaction-state recovery.
+  redirects, permission requests, downloads, interaction-state recovery, and a
+  sequential Paperpile batch queue.
 - **Offscreen HTML parser:** standard metadata and general CAPTCHA/login
   detection for landing pages without creating a visible browser tab.
 - **Resolver core:** pure TypeScript package shared by browser and future iOS clients.
