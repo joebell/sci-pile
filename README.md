@@ -200,6 +200,13 @@ their saved links, and identifies the linked scholarly work from a DOI declared
 in the URL or standard page metadata. If no DOI is declared, the same
 conservative Crossref title matching used elsewhere can identify it.
 
+If a linked site has not yet been authorized, the review page offers **Allow
+all Website access & retry**. Approve Chrome's prompt once to let Sci-Pile
+inspect HTTP and HTTPS links automatically; every permission-blocked row in the
+current batch is then retried together, and later repair batches reuse the same
+permission. The individual per-site approval buttons remain available for
+users who prefer narrowly scoped access.
+
 Malformed saved links are repaired conservatively before they are opened. For
 example, duplicated scheme text such as `http://httphttps//publisher.example/…`
 is reduced to a valid HTTPS link only when the remaining text begins with a
